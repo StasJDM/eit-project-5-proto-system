@@ -1,272 +1,286 @@
-"""Окно ЭКСПОРТ ДАННЫХ.
+"""Study/category selection and generation of versioned export packages."""
 
-Левая колонка:  Формат экспорта (JSON / EXCEL / CSV)
-Правая колонка: История исследований
-Нижняя строка:  Старт | Сбросить настройки | Сформировать
-"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from uuid import UUID
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QScrollArea, QSizePolicy,
+    QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt
-from ..styles import C, configure_action_btn, yellow_btn_style, FONT_BASE, FONT_TITLE, FONT_SMALL
-from ..i18n import t, i18n
+
+from ..application.exporting import EXPORT_CATEGORIES, ExportError, StudyExportService
+from ..i18n import i18n, t
+from ..styles import C, FONT_BASE, FONT_TITLE, configure_action_btn, yellow_btn_style
+from ..technical_logging import get_logger, technical_event
+from ..ui_text import study_conclusion_text, study_status_text
 
 
-# ── Style helpers ─────────────────────────────────────────────────────────────
+_logger = get_logger("export")
+_CATEGORY_LABELS = {
+    "metadata": "exp_category_metadata",
+    "metrics": "exp_category_metrics",
+    "trends": "exp_category_trends",
+    "events": "exp_category_events",
+    "raw_data": "exp_category_raw",
+}
+
 
 def _fmt_btn_style() -> str:
     return yellow_btn_style() + f"""
         QPushButton[active="true"] {{
-            background-color: #5a4500;
-            border-color: {C['warn']};
-            font-weight: bold;
+            background-color:#5a4500;border-color:{C['warn']};font-weight:bold;
         }}
     """
 
-def _detail_btn_style() -> str:
-    return f"""
-        QPushButton {{
-            background-color: #2a1400;
-            color: {C['warn']};
-            border: 1px solid #5a3000;
-            border-radius: 3px;
-            font-size: {FONT_SMALL}px;
-            font-weight: 500;
-            padding: 0 14px;
-        }}
-        QPushButton:hover {{ background-color: #3a1e00; }}
-    """
-
-
-# ── Section box ───────────────────────────────────────────────────────────────
 
 class _SectionBox(QWidget):
-    """Bordered card with a title header."""
-
     def __init__(self, title_key: str, parent=None):
         super().__init__(parent)
         self._title_key = title_key
-
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
-        title_bar = QWidget()
-        title_bar.setFixedHeight(36)
-        title_bar.setStyleSheet(f"""
-            background-color: {C['blue_dark']};
-            border: 1px solid {C['border']};
-            border-radius: 4px 4px 0 0;
-        """)
-        tbl = QHBoxLayout(title_bar)
-        tbl.setContentsMargins(10, 0, 10, 0)
-        self._lbl_title = QLabel(t(title_key))
-        self._lbl_title.setStyleSheet(
-            f"color: white; font-size: {FONT_TITLE}px; font-weight: bold; background: transparent;"
-        )
-        tbl.addWidget(self._lbl_title)
-        root.addWidget(title_bar)
-
+        header = QWidget()
+        header.setFixedHeight(36)
+        header.setStyleSheet(f"background:{C['blue_dark']};border:1px solid {C['border']};")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(10, 0, 10, 0)
+        self._title = QLabel(t(title_key))
+        self._title.setStyleSheet(f"color:white;font-size:{FONT_TITLE}px;font-weight:bold;")
+        header_layout.addWidget(self._title)
+        root.addWidget(header)
         self._body = QWidget()
-        self._body.setStyleSheet(f"""
-            background-color: {C['bg_panel']};
-            border: 1px solid {C['border']};
-            border-top: none;
-            border-radius: 0 0 4px 4px;
-        """)
-        self._body_lay = QVBoxLayout(self._body)
-        self._body_lay.setContentsMargins(10, 10, 10, 10)
-        self._body_lay.setSpacing(8)
+        self._body.setStyleSheet(f"background:{C['bg_panel']};border:1px solid {C['border']};")
+        self.body_layout = QVBoxLayout(self._body)
+        self.body_layout.setContentsMargins(10, 10, 10, 10)
+        self.body_layout.setSpacing(7)
         root.addWidget(self._body)
 
-    @property
-    def body_layout(self):
-        return self._body_lay
-
     def retranslate(self):
-        self._lbl_title.setText(t(self._title_key))
+        self._title.setText(t(self._title_key))
 
 
-# ── History row ───────────────────────────────────────────────────────────────
-
-class _HistoryRow(QWidget):
-
-    _ROW_H = 44
-    _DATE_W = 108
-    _BTN_W = 118
-    _BTN_H = 34
-
-    def __init__(self, date: str, parent=None):
+class _StudyRow(QWidget):
+    def __init__(self, study, patient, on_change, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(self._ROW_H)
-        self.setStyleSheet(f"""
-            background-color: {C['bg_card']};
-            border: 1px solid {C['border']};
-            border-radius: 3px;
-        """)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 5, 8, 5)
-        lay.setSpacing(12)
+        self._study = study
+        self.study_id: UUID = study.id
+        self.checkbox = QCheckBox()
+        self.checkbox.stateChanged.connect(on_change)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.addWidget(self.checkbox)
+        self._patient_name = " ".join(filter(None, (
+            getattr(patient, "family_name", None),
+            getattr(patient, "given_name", None),
+            getattr(patient, "middle_name", None),
+        ))) or getattr(patient, "external_id", None) or "—"
+        self._label = QLabel()
+        self._label.setStyleSheet(f"color:{C['text']};font-size:{FONT_BASE}px;")
+        layout.addWidget(self._label, 1)
+        date = QLabel(study.created_at_utc.astimezone().strftime("%d.%m.%Y %H:%M"))
+        layout.addWidget(date)
+        self._details = QPushButton(t("exp_btn_details"))
+        self._details.clicked.connect(self._show_details)
+        layout.addWidget(self._details)
+        self.setStyleSheet(f"background:{C['bg_card']};border:1px solid {C['border']};")
+        self.retranslate()
 
-        self._lbl = QLabel(t("exp_prev_study"))
-        self._lbl.setStyleSheet(
-            f"color:{C['text']}; font-size:{FONT_BASE}px; background:transparent;"
+    def _show_details(self):
+        study = self._study
+        QMessageBox.information(
+            self,
+            t("exp_btn_details"),
+            f"ID: {study.id}\n"
+            f"{t('exp_detail_patient')}: {self._patient_name}\n"
+            f"{t('exp_detail_status')}: {study_status_text(study.status)}\n"
+            f"{t('exp_detail_created')}: "
+            f"{study.created_at_utc.astimezone().strftime('%d.%m.%Y %H:%M')}\n"
+            f"{t('exp_detail_conclusion')}: {study_conclusion_text(study.conclusion)}",
         )
-        lay.addWidget(self._lbl, stretch=1)
-
-        lbl_date = QLabel(date)
-        lbl_date.setFixedSize(self._DATE_W, self._BTN_H)
-        lbl_date.setAlignment(Qt.AlignCenter)
-        lbl_date.setStyleSheet(
-            f"color:{C['text']}; font-size:{FONT_SMALL}px;"
-            f"background:{C['bg_main']}; border:1px solid {C['border']};"
-            f"border-radius:3px; padding:0 8px;"
-        )
-        lay.addWidget(lbl_date)
-
-        btn = QPushButton(t("exp_btn_details"))
-        btn.setFixedSize(self._BTN_W, self._BTN_H)
-        btn.setStyleSheet(_detail_btn_style())
-        self._btn = btn
-        lay.addWidget(btn)
 
     def retranslate(self):
-        self._lbl.setText(t("exp_prev_study"))
-        self._btn.setText(t("exp_btn_details"))
+        self._label.setText(
+            f"{self._patient_name} · {str(self._study.id)[:8]} · "
+            f"{study_status_text(self._study.status)}"
+        )
+        self._details.setText(t("exp_btn_details"))
 
-
-# ── Export data screen ────────────────────────────────────────────────────────
 
 class ExportDataScreen(QWidget):
+    _FORMATS = ("JSON", "EXCEL", "CSV")
 
-    # Available export formats (label as shown on button)
-    _FORMATS = ["JSON", "EXCEL", "CSV"]
-
-    def __init__(self, parent=None):
+    def __init__(self, service: StudyExportService | None = None, default_directory: Path | None = None, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"background-color:{C['bg_main']};")
-
+        self._service = service
+        self._default_directory = Path(default_directory or "exports")
         self._active_fmt = "JSON"
+        self._history_rows: list[_StudyRow] = []
+        self.setStyleSheet(f"background:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
-        outer.setSpacing(10)
-
-        # ── Scroll wrapper ────────────────────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        outer.addWidget(scroll, stretch=1)
-
         content = QWidget()
-        content.setStyleSheet("background: transparent;")
         scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
+        columns = QHBoxLayout(content)
 
-        content_lay = QVBoxLayout(content)
-        content_lay.setContentsMargins(0, 0, 0, 0)
-        content_lay.setSpacing(10)
-
-        # ── Two-column layout ─────────────────────────────────────────────────
-        cols = QHBoxLayout()
-        cols.setSpacing(12)
-        content_lay.addLayout(cols)
-
-        # ── LEFT COLUMN — format selector ─────────────────────────────────────
         left = QVBoxLayout()
-        left.setSpacing(10)
-        cols.addLayout(left, stretch=28)
-
+        columns.addLayout(left, 30)
         self._box_format = _SectionBox("exp_format_title")
-        fmt_lay = self._box_format.body_layout
-        fmt_lay.setSpacing(10)
-
-        self._fmt_btns: dict[str, QPushButton] = {}
+        self._fmt_btns = {}
         for fmt in self._FORMATS:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(44)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setStyleSheet(_fmt_btn_style())
-            btn.clicked.connect(lambda checked=False, f=fmt: self._select_format(f))
-            fmt_lay.addWidget(btn)
-            self._fmt_btns[fmt] = btn
-
-        fmt_lay.addStretch()
+            button = QPushButton(fmt)
+            button.setFixedHeight(42)
+            button.setStyleSheet(_fmt_btn_style())
+            button.clicked.connect(lambda _=False, value=fmt: self._select_format(value))
+            self._box_format.body_layout.addWidget(button)
+            self._fmt_btns[fmt] = button
         left.addWidget(self._box_format)
+        self._box_categories = _SectionBox("exp_data_title")
+        self._category_checks: dict[str, QCheckBox] = {}
+        for category in EXPORT_CATEGORIES:
+            checkbox = QCheckBox(t(_CATEGORY_LABELS[category]))
+            checkbox.setChecked(category != "raw_data")
+            checkbox.stateChanged.connect(self._update_estimate)
+            self._box_categories.body_layout.addWidget(checkbox)
+            self._category_checks[category] = checkbox
+        left.addWidget(self._box_categories)
         left.addStretch()
 
-        self._select_format(self._active_fmt)
-
-        # ── RIGHT COLUMN — study history ──────────────────────────────────────
         right = QVBoxLayout()
-        right.setSpacing(10)
-        cols.addLayout(right, stretch=72)
-
+        columns.addLayout(right, 70)
         self._box_history = _SectionBox("exp_history_title")
-        hist_lay = self._box_history.body_layout
-        hist_lay.setSpacing(6)
-
-        self._history_rows: list[_HistoryRow] = []
-        for date in ["01.01.2025", "01.02.2025", "01.03.2025"]:
-            row = _HistoryRow(date)
-            self._history_rows.append(row)
-            hist_lay.addWidget(row)
-
-        hist_lay.addStretch()
+        self._history_layout = self._box_history.body_layout
         right.addWidget(self._box_history)
+        self._privacy = QLabel(t("exp_privacy_warning"))
+        self._privacy.setWordWrap(True)
+        self._privacy.setStyleSheet(f"color:{C['warn']};font-size:{FONT_BASE}px;")
+        right.addWidget(self._privacy)
+        self._estimate = QLabel()
+        self._estimate.setStyleSheet(f"color:{C['text_dim']};font-size:{FONT_BASE}px;")
+        right.addWidget(self._estimate)
         right.addStretch()
 
-        # ── Bottom action bar ─────────────────────────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color:{C['border']};")
-        outer.addWidget(sep)
-
         bottom = QHBoxLayout()
-        bottom.setSpacing(12)
-
+        outer.addLayout(bottom)
         self._btn_start = QPushButton(t("btn_start"))
         self._btn_start.setObjectName("btn_start")
         self._btn_start.setFixedHeight(52)
-        self._btn_start.setMinimumWidth(100)
         bottom.addWidget(self._btn_start)
-
         bottom.addStretch()
-
         self._btn_reset = QPushButton(t("exp_btn_reset"))
         configure_action_btn(self._btn_reset, 200)
         self._btn_reset.clicked.connect(self._reset_settings)
         bottom.addWidget(self._btn_reset)
-
         self._btn_generate = QPushButton(t("exp_btn_generate"))
         configure_action_btn(self._btn_generate, 160)
+        self._btn_generate.clicked.connect(self._generate)
         bottom.addWidget(self._btn_generate)
-
-        outer.addLayout(bottom)
-
+        self._select_format("JSON")
+        self.refresh()
         i18n.language_changed.connect(self.retranslate)
 
-    # ── Internals ─────────────────────────────────────────────────────────────
+    def refresh(self):
+        while self._history_layout.count():
+            item = self._history_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._history_rows.clear()
+        if self._service is not None:
+            for study in self._service.list_studies():
+                patient = self._service._repositories.patients.get(study.patient_id)
+                row = _StudyRow(study, patient, self._update_estimate)
+                self._history_layout.addWidget(row)
+                self._history_rows.append(row)
+        if not self._history_rows:
+            empty = QLabel(t("exp_no_studies"))
+            empty.setObjectName("export_empty")
+            empty.setStyleSheet(f"color:{C['text_dim']};")
+            self._history_layout.addWidget(empty)
+        self._update_estimate()
+
+    def selected_study_ids(self) -> tuple[UUID, ...]:
+        return tuple(row.study_id for row in self._history_rows if row.checkbox.isChecked())
+
+    def selected_categories(self) -> tuple[str, ...]:
+        return tuple(key for key, value in self._category_checks.items() if value.isChecked())
 
     def _select_format(self, fmt: str):
         self._active_fmt = fmt
-        for f, btn in self._fmt_btns.items():
-            btn.setProperty("active", "true" if f == fmt else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        for name, button in self._fmt_btns.items():
+            button.setProperty("active", "true" if name == fmt else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _update_estimate(self):
+        if self._service is None:
+            self._estimate.setText("")
+            return
+        try:
+            estimate = self._service.estimate(self.selected_study_ids(), self.selected_categories())
+            self._estimate.setText(t("exp_estimate").format(
+                count=estimate.study_count,
+                size=_human_size(estimate.estimated_bytes),
+            ))
+            self._privacy.setVisible(estimate.contains_personal_data)
+        except ExportError:
+            self._estimate.setText(t("exp_selection_error"))
 
     def _reset_settings(self):
         self._select_format("JSON")
+        for row in self._history_rows:
+            row.checkbox.setChecked(False)
+        for name, checkbox in self._category_checks.items():
+            checkbox.setChecked(name != "raw_data")
 
-    # ── Retranslate ────────────────────────────────────────────────────────────
+    def _generate(self):
+        if self._service is None:
+            return
+        directory = QFileDialog.getExistingDirectory(self, t("exp_btn_generate"), str(self._default_directory))
+        if not directory:
+            return
+        try:
+            result = self._service.export(directory, self._active_fmt, self.selected_study_ids(), self.selected_categories())
+        except (ExportError, OSError):
+            QMessageBox.warning(
+                self, t("study_action_error_title"), t("exp_generation_error")
+            )
+            technical_event(_logger, logging.ERROR, "export.failed", export_format=self._active_fmt.lower(), result="failed")
+            return
+        technical_event(_logger, logging.INFO, "export.completed", export_format=self._active_fmt.lower(), result="success")
+        QMessageBox.information(
+            self, t("exp_btn_generate"), t("exp_saved").format(path=result.directory)
+        )
 
     def retranslate(self):
         self._box_format.retranslate()
+        self._box_categories.retranslate()
         self._box_history.retranslate()
+        for category, checkbox in self._category_checks.items():
+            checkbox.setText(t(_CATEGORY_LABELS[category]))
+        self._privacy.setText(t("exp_privacy_warning"))
+        empty = self.findChild(QLabel, "export_empty")
+        if empty is not None:
+            empty.setText(t("exp_no_studies"))
         for row in self._history_rows:
             row.retranslate()
+        self._update_estimate()
         self._btn_start.setText(t("btn_start"))
         self._btn_reset.setText(t("exp_btn_reset"))
         self._btn_generate.setText(t("exp_btn_generate"))
+
+
+def _human_size(value: int) -> str:
+    amount = float(value)
+    for unit in ("B", "KB", "MB", "GB"):
+        if amount < 1024 or unit == "GB":
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} ГБ"

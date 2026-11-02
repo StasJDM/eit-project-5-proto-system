@@ -8,8 +8,9 @@ import math
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+    QProgressBar,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QFontMetrics,
 )
@@ -18,17 +19,10 @@ from ..styles import C, FONT_BASE, FONT_LABEL, FONT_SMALL, FONT_BTN
 from ..i18n import t, i18n
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounterBar
+from ..application import ElectrodeQualityService, StudyLifecycleError
+from ..domain import CalibrationStatus
 
-# ── Mock signal levels (0.0 – 1.0) for electrodes 1-16 ──────────────────────
-_SIGNAL: list[float] = [
-    0.90, 0.88, 0.92, 0.85,        # 1-4   Сильный
-    0.42,                           # 5     Слабый
-    0.78, 0.82, 0.87,              # 6-8   Сильный
-    0.22,                           # 9     Недостаточно
-    0.85, 0.91, 0.88, 0.86, 0.89, # 10-14 Сильный
-    0.19,                           # 15    Недостаточно
-    0.80,                           # 16    Сильный
-]
+_EMPTY_SIGNAL: list[float] = [0.0] * 16
 
 # Quality thresholds: (min_value, fill_color, i18n_key)
 _QUALITY: list[tuple[float, str, str]] = [
@@ -63,6 +57,10 @@ class _ElectrodeDiagram(QWidget):
         self.setMinimumSize(240, 220)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background:transparent;")
+
+    def set_signals(self, signals: list[float]) -> None:
+        self._signals = list(signals)
+        self.update()
 
     def paintEvent(self, _event):
         p = QPainter(self)
@@ -153,6 +151,10 @@ class _BarChart(QWidget):
             f"border:1px solid {C['border']};border-radius:4px;"
         )
 
+    def set_signals(self, signals: list[float]) -> None:
+        self._signals = list(signals)
+        self.update()
+
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -200,8 +202,11 @@ class _BarChart(QWidget):
 class DebugScreen(QWidget):
     """Отладка и тестирование — electrode signal quality check."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self, quality_service: ElectrodeQualityService | None = None, parent=None
+    ):
         super().__init__(parent)
+        self._quality_service = quality_service
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
@@ -218,7 +223,7 @@ class DebugScreen(QWidget):
 
         # ── Electrode diagram ─────────────────────────────────────────────────
         diag_row = QHBoxLayout()
-        self._diagram = _ElectrodeDiagram(_SIGNAL)
+        self._diagram = _ElectrodeDiagram(_EMPTY_SIGNAL)
         diag_row.addStretch()
         diag_row.addWidget(self._diagram)
         diag_row.addStretch()
@@ -245,10 +250,25 @@ class DebugScreen(QWidget):
         """)
         chart_row.addWidget(self._btn_calibrate, alignment=Qt.AlignVCenter)
 
-        self._chart = _BarChart(_SIGNAL)
+        self._chart = _BarChart(_EMPTY_SIGNAL)
         chart_row.addWidget(self._chart, stretch=1)
 
         outer.addLayout(chart_row, stretch=2)
+
+        quality_row = QHBoxLayout()
+        self._quality_status = QLabel(t("sq_status_waiting"))
+        self._quality_status.setStyleSheet(
+            f"color:{C['text']};font-size:{FONT_SMALL}px;background:transparent;"
+        )
+        quality_row.addWidget(self._quality_status, stretch=1)
+        self._calibration_progress = QProgressBar()
+        self._calibration_progress.setRange(0, 100)
+        self._calibration_progress.setValue(0)
+        self._calibration_progress.setTextVisible(True)
+        self._calibration_progress.setFixedWidth(220)
+        self._calibration_progress.hide()
+        quality_row.addWidget(self._calibration_progress)
+        outer.addLayout(quality_row)
 
         # ── Bottom: Start + legend ────────────────────────────────────────────
         bottom_row = QHBoxLayout()
@@ -287,6 +307,12 @@ class DebugScreen(QWidget):
         bottom_row.addStretch()
         outer.addLayout(bottom_row)
 
+        self._btn_calibrate.clicked.connect(self._begin_calibration)
+        self._quality_timer = QTimer(self)
+        self._quality_timer.timeout.connect(self.refresh_quality)
+        self._quality_timer.start(500)
+        self.refresh_quality()
+
         i18n.language_changed.connect(self.retranslate)
 
     def retranslate(self):
@@ -295,3 +321,51 @@ class DebugScreen(QWidget):
         self._btn_start.setText(t("btn_start"))
         for key, lbl in self._legend_lbls:
             lbl.setText(t(key))
+
+    def refresh_quality(self) -> None:
+        if self._quality_service is None:
+            return
+        snapshot = self._quality_service.refresh()
+        levels = [0.0 if item.level is None else item.level for item in snapshot.contacts]
+        self._diagram.set_signals(levels)
+        self._chart.set_signals(levels)
+        percent = round(snapshot.usable_measurement_ratio * 100)
+        key = "sq_status_ready" if snapshot.start_allowed else "sq_status_blocked"
+        self._quality_status.setText(t(key).format(percent=percent))
+
+    def _begin_calibration(self) -> None:
+        if self._quality_service is None or self._calibration_progress.isVisible():
+            return
+        self._btn_calibrate.setEnabled(False)
+        self._quality_timer.stop()
+        self._calibration_progress.setValue(0)
+        self._calibration_progress.show()
+        self._quality_status.setText(t("sq_calibration_running"))
+        QTimer.singleShot(50, self._advance_calibration)
+
+    def _advance_calibration(self) -> None:
+        value = self._calibration_progress.value() + 25
+        self._calibration_progress.setValue(value)
+        if value < 100:
+            QTimer.singleShot(50, self._advance_calibration)
+            return
+        try:
+            result = self._quality_service.calibrate()
+        except (StudyLifecycleError, ValueError):
+            self._quality_status.setText(t("sq_calibration_no_study"))
+        else:
+            if result.status is CalibrationStatus.SUCCEEDED:
+                self._quality_status.setText(t("sq_calibration_success"))
+            else:
+                failed = ", ".join(map(str, result.failed_electrodes)) or "—"
+                self._quality_status.setText(
+                    t("sq_calibration_failed").format(electrodes=failed)
+                )
+        finally:
+            self._btn_calibrate.setEnabled(True)
+            QTimer.singleShot(1500, self._finish_calibration_ui)
+
+    def _finish_calibration_ui(self) -> None:
+        self._calibration_progress.hide()
+        self._quality_timer.start(500)
+        self.refresh_quality()

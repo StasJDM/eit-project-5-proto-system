@@ -71,6 +71,192 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "主菜单",
         "vi": "Menu chính",
     },
+    "hdr_live": {
+        "ru": "ЭФИР",
+        "en": "LIVE",
+        "zh": "实时",
+        "vi": "TRỰC TIẾP",
+    },
+    "hdr_playback": {
+        "ru": "АРХИВ",
+        "en": "REPLAY",
+        "zh": "回放",
+        "vi": "PHÁT LẠI",
+    },
+    "pat_playback": {
+        "ru": "Просмотр",
+        "en": "Playback",
+        "zh": "回放",
+        "vi": "Phát lại",
+    },
+    "pat_import_eit_json": {
+        "ru": "Загрузить измерения ЭИТ из JSON",
+        "en": "Load EIT measurements from JSON",
+        "zh": "从 JSON 加载 EIT 测量",
+        "vi": "Tải phép đo EIT từ JSON",
+    },
+    "pat_import_eit_json_hint": {
+        "ru": "Исследовательская FEM/GREIT-реконструкция; порядок каналов и геометрия требуют подтверждения",
+        "en": "Research FEM/GREIT reconstruction; channel order and geometry require confirmation",
+        "zh": "研究性 FEM/GREIT 重建；通道顺序和几何形状需要确认",
+        "vi": "Tái tạo FEM/GREIT nghiên cứu; thứ tự kênh và hình học cần được xác nhận",
+    },
+    "pat_import_eit_json_filter": {
+        "ru": "Измерения ЭИТ JSON (*.json)",
+        "en": "EIT JSON measurements (*.json)",
+        "zh": "EIT JSON 测量 (*.json)",
+        "vi": "Phép đo EIT JSON (*.json)",
+    },
+    "pat_import_eit_json_error": {
+        "ru": "Файл не удалось проверить или реконструировать. Требуются последовательные кадры по 208 числовых каналов.",
+        "en": "The file could not be validated or reconstructed. Sequential frames with 208 numeric channels are required.",
+        "zh": "无法验证或重建文件。需要包含 208 个数值通道的连续帧。",
+        "vi": "Không thể xác thực hoặc tái tạo tệp. Cần các khung liên tiếp với 208 kênh số.",
+    },
+    "study_playback_unavailable": {
+        "ru": "Запись исследования недоступна или повреждена.",
+        "en": "The study recording is unavailable or damaged.",
+        "zh": "检查记录不可用或已损坏。",
+        "vi": "Bản ghi nghiên cứu không khả dụng hoặc bị hỏng.",
+    },
+    "playback_read_only": {
+        "ru": "АРХИВ · только просмотр",
+        "en": "ARCHIVE · read only",
+        "zh": "存档 · 只读",
+        "vi": "LƯU TRỮ · chỉ đọc",
+    },
+    "playback_pause": {
+        "ru": "Пауза",
+        "en": "Pause",
+        "zh": "暂停",
+        "vi": "Tạm dừng",
+    },
+    "playback_resume": {
+        "ru": "Продолжить",
+        "en": "Resume",
+        "zh": "继续",
+        "vi": "Tiếp tục",
+    },
+    "playback_close": {
+        "ru": "Закрыть",
+        "en": "Close",
+        "zh": "关闭",
+        "vi": "Đóng",
+    },
+    "monitor_quality_valid": {
+        "ru": "Данные: качество в норме", "en": "Data quality: valid",
+        "zh": "数据质量：正常", "vi": "Chất lượng dữ liệu: hợp lệ",
+    },
+    "monitor_quality_degraded": {
+        "ru": "Данные: низкое качество", "en": "Data quality: degraded",
+        "zh": "数据质量：较低", "vi": "Chất lượng dữ liệu: suy giảm",
+    },
+    "monitor_reason_reconstruction_hypothesis": {
+        "ru": "FEM/GREIT-реконструкция рассчитана, но порядок каналов и геометрия прибора не подтверждены",
+        "en": "FEM/GREIT reconstruction is calculated, but device channel order and geometry are unconfirmed",
+        "zh": "FEM/GREIT 重建已计算，但设备通道顺序和几何形状尚未确认",
+        "vi": "Đã tính tái tạo FEM/GREIT, nhưng thứ tự kênh và hình học thiết bị chưa được xác nhận",
+    },
+    "monitor_quality_stale": {
+        "ru": "Данные: обновление приостановлено", "en": "Data: updates paused",
+        "zh": "数据：更新已暂停", "vi": "Dữ liệu: cập nhật đã tạm dừng",
+    },
+    "monitor_quality_unavailable": {
+        "ru": "Данные недоступны", "en": "Data unavailable",
+        "zh": "数据不可用", "vi": "Dữ liệu không khả dụng",
+    },
+    "monitor_reason_insufficient": {
+        "ru": "недостаточно данных", "en": "insufficient data",
+        "zh": "数据不足", "vi": "không đủ dữ liệu",
+    },
+    "monitor_reason_cycles": {
+        "ru": "недостаточно полных дыхательных циклов", "en": "not enough complete breathing cycles",
+        "zh": "完整呼吸周期不足", "vi": "không đủ chu kỳ thở hoàn chỉnh",
+    },
+    "monitor_reason_no_breath": {
+        "ru": "дыхательный сигнал не обнаружен", "en": "no breathing signal detected",
+        "zh": "未检测到呼吸信号", "vi": "không phát hiện tín hiệu thở",
+    },
+    "monitor_reason_regional": {
+        "ru": "регионарный сигнал недоступен", "en": "regional signal unavailable",
+        "zh": "区域信号不可用", "vi": "tín hiệu khu vực không khả dụng",
+    },
+    "monitor_reason_source": {
+        "ru": "источник не передаёт данные", "en": "source is not providing data",
+        "zh": "数据源未提供数据", "vi": "nguồn không cung cấp dữ liệu",
+    },
+    "monitor_reason_source_quality": {
+        "ru": "источник сообщил низкое качество", "en": "source reported low quality",
+        "zh": "数据源报告质量较低", "vi": "nguồn báo chất lượng thấp",
+    },
+    "monitor_reason_artifact": {
+        "ru": "обнаружен артефакт движения или сигнала", "en": "motion or signal artifact detected",
+        "zh": "检测到运动或信号伪影", "vi": "phát hiện nhiễu do chuyển động hoặc tín hiệu",
+    },
+    "monitor_reason_paused": {
+        "ru": "мониторинг приостановлен", "en": "monitoring is paused",
+        "zh": "监测已暂停", "vi": "giám sát đã tạm dừng",
+    },
+    "monitor_reason_lost": {
+        "ru": "поток данных потерян", "en": "data stream lost",
+        "zh": "数据流已丢失", "vi": "mất luồng dữ liệu",
+    },
+    "marker_dialog_title": {
+        "ru": "Маркер события", "en": "Event marker",
+        "zh": "事件标记", "vi": "Đánh dấu sự kiện",
+    },
+    "marker_correction_title": {
+        "ru": "Корректирующая запись", "en": "Correction entry",
+        "zh": "更正记录", "vi": "Bản ghi hiệu chỉnh",
+    },
+    "marker_position": {
+        "ru": "Позиция исследования", "en": "Study position",
+        "zh": "检查位置", "vi": "Vị trí nghiên cứu",
+    },
+    "marker_type": {
+        "ru": "Тип", "en": "Type", "zh": "类型", "vi": "Loại",
+    },
+    "marker_author": {
+        "ru": "Автор", "en": "Author", "zh": "作者", "vi": "Tác giả",
+    },
+    "marker_description": {
+        "ru": "Описание", "en": "Description", "zh": "描述", "vi": "Mô tả",
+    },
+    "marker_description_hint": {
+        "ru": "Что произошло во время мониторинга?", "en": "What happened during monitoring?",
+        "zh": "监测期间发生了什么？", "vi": "Điều gì đã xảy ra trong quá trình giám sát?",
+    },
+    "marker_required": {
+        "ru": "Укажите описание и автора.", "en": "Enter a description and author.",
+        "zh": "请输入描述和作者。", "vi": "Nhập mô tả và tác giả.",
+    },
+    "marker_type_cough": {
+        "ru": "Кашель", "en": "Cough", "zh": "咳嗽", "vi": "Ho",
+    },
+    "marker_type_procedure": {
+        "ru": "Манипуляция", "en": "Procedure", "zh": "操作", "vi": "Thủ thuật",
+    },
+    "marker_type_position": {
+        "ru": "Смена положения", "en": "Position change", "zh": "体位改变", "vi": "Thay đổi tư thế",
+    },
+    "marker_type_suction": {
+        "ru": "Санация", "en": "Suction", "zh": "吸痰", "vi": "Hút đờm",
+    },
+    "marker_type_note": {
+        "ru": "Заметка оператора", "en": "Operator note", "zh": "操作员备注", "vi": "Ghi chú người vận hành",
+    },
+    "marker_unavailable": {
+        "ru": "Маркер можно создать только для активного исследования.",
+        "en": "A marker can only be created for an active study.",
+        "zh": "只能为正在进行的检查创建标记。",
+        "vi": "Chỉ có thể tạo dấu cho nghiên cứu đang hoạt động.",
+    },
+    "marker_correction": {
+        "ru": "Исправить", "en": "Correct", "zh": "更正", "vi": "Hiệu chỉnh",
+    },
+    "marker_corrects": {
+        "ru": "Коррекция", "en": "Correction", "zh": "更正", "vi": "Hiệu chỉnh",
+    },
 
     # ── Navigation panel ───────────────────────────────────────────────────
     "nav_main": {
@@ -147,6 +333,24 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "呼吸周期",
         "vi": "Chu kỳ thở",
     },
+    "lung_reconstruction_map": {
+        "ru": "Карта реконструкции ΔZ",
+        "en": "Reconstructed ΔZ map",
+        "zh": "重建 ΔZ 图",
+        "vi": "Bản đồ tái tạo ΔZ",
+    },
+    "lung_reconstruction_tooltip": {
+        "ru": "Абсолютная карта показывает относительную проводимость в условных единицах. Щёлкните по карте для переключения на ΔZ.",
+        "en": "The absolute map shows relative conductivity in arbitrary units. Click the map to switch to ΔZ.",
+        "zh": "绝对图显示任意单位的相对电导率。点击图像可切换到 ΔZ。",
+        "vi": "Bản đồ tuyệt đối hiển thị độ dẫn điện tương đối theo đơn vị quy ước. Nhấp để chuyển sang ΔZ.",
+    },
+    "lung_absolute_conductivity_map": {
+        "ru": "Проводимость σ (отн., а.е.)",
+        "en": "Conductivity σ (relative, a.u.)",
+        "zh": "电导率 σ（相对，任意单位）",
+        "vi": "Độ dẫn điện σ (tương đối, đ.v.q.ư.)",
+    },
 
 
     # ── Waveform section headers ───────────────────────────────────────────
@@ -173,6 +377,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "br/min",
         "zh": "次/分",
         "vi": "lần/phút",
+    },
+    "wave_rr_short": {
+        "ru": "ЧД", "en": "RR", "zh": "呼吸率", "vi": "NT",
     },
     "wave_event_marker": {
         "ru": "⚑  МАРКЕР СОБЫТИЙ",
@@ -212,6 +419,93 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "⏹  停止",
         "vi": "⏹  DỪNG",
     },
+    "study_stop_title": {
+        "ru": "Завершение исследования", "en": "Complete study",
+        "zh": "结束检查", "vi": "Kết thúc nghiên cứu",
+    },
+    "study_stop_confirm": {
+        "ru": "Завершить активное исследование? После завершения оно будет доступно только для просмотра и экспорта.",
+        "en": "Complete the active study? Afterwards it will be available only for viewing and export.",
+        "zh": "结束当前检查？结束后只能查看和导出。",
+        "vi": "Kết thúc nghiên cứu đang hoạt động? Sau đó chỉ có thể xem và xuất.",
+    },
+    "study_action_error_title": {
+        "ru": "Действие недоступно", "en": "Action unavailable",
+        "zh": "操作不可用", "vi": "Thao tác không khả dụng",
+    },
+    "study_prepare_first": {
+        "ru": "Сначала сохраните пациента и привяжите новое исследование.",
+        "en": "Save the patient and link a new study first.",
+        "zh": "请先保存患者并关联新的检查。",
+        "vi": "Trước tiên hãy lưu bệnh nhân và liên kết nghiên cứu mới.",
+    },
+    "study_invalid_transition": {
+        "ru": "Переход в это состояние исследования недопустим.",
+        "en": "This study state transition is not allowed.",
+        "zh": "不允许转换到此检查状态。",
+        "vi": "Không cho phép chuyển sang trạng thái nghiên cứu này.",
+    },
+    "study_select_patient_first": {
+        "ru": "Сначала сохраните или выберите пациента.",
+        "en": "Save or select a patient first.",
+        "zh": "请先保存或选择患者。",
+        "vi": "Trước tiên hãy lưu hoặc chọn bệnh nhân.",
+    },
+    "study_finish_current_first": {
+        "ru": "Сначала завершите текущее исследование.",
+        "en": "Complete the current study first.",
+        "zh": "请先结束当前检查。",
+        "vi": "Hãy kết thúc nghiên cứu hiện tại trước.",
+    },
+    "study_active_other_patient": {
+        "ru": "Нельзя сменить пациента во время активного исследования.",
+        "en": "The patient cannot be changed during an active study.",
+        "zh": "活动检查期间不能更换患者。",
+        "vi": "Không thể đổi bệnh nhân trong khi nghiên cứu đang hoạt động.",
+    },
+    "study_linked_title": {
+        "ru": "Исследование подготовлено", "en": "Study prepared",
+        "zh": "检查已准备", "vi": "Nghiên cứu đã sẵn sàng",
+    },
+    "study_linked_message": {
+        "ru": "Новое исследование привязано к выбранному пациенту и готово к запуску.",
+        "en": "A new study is linked to the selected patient and ready to start.",
+        "zh": "新检查已关联到所选患者，可以开始。",
+        "vi": "Nghiên cứu mới đã được liên kết với bệnh nhân và sẵn sàng bắt đầu.",
+    },
+    "study_status_draft": {"ru": "Черновик", "en": "Draft", "zh": "草稿", "vi": "Bản nháp"},
+    "study_status_ready": {"ru": "Готово", "en": "Ready", "zh": "就绪", "vi": "Sẵn sàng"},
+    "study_status_running": {"ru": "Выполняется", "en": "Running", "zh": "进行中", "vi": "Đang chạy"},
+    "study_status_paused": {"ru": "Приостановлено", "en": "Paused", "zh": "已暂停", "vi": "Tạm dừng"},
+    "study_status_completed": {"ru": "Завершено", "en": "Completed", "zh": "已完成", "vi": "Hoàn thành"},
+    "study_status_failed": {"ru": "Завершено аварийно", "en": "Failed", "zh": "异常结束", "vi": "Thất bại"},
+    "study_conclusion_missing": {
+        "ru": "Заключение не указано", "en": "No conclusion provided",
+        "zh": "未提供结论", "vi": "Chưa có kết luận",
+    },
+    "study_conclusion_emergency": {
+        "ru": "Аварийное завершение", "en": "Emergency termination",
+        "zh": "紧急终止", "vi": "Kết thúc khẩn cấp",
+    },
+    "study_conclusion_restart": {
+        "ru": "Прервано перезапуском приложения", "en": "Interrupted by application restart",
+        "zh": "因应用重启而中断", "vi": "Bị gián đoạn do khởi động lại ứng dụng",
+    },
+    "study_conclusion_application_closed": {
+        "ru": "Завершено при закрытии приложения",
+        "en": "Completed when the application was closed",
+        "zh": "应用关闭时结束",
+        "vi": "Hoàn tất khi đóng ứng dụng",
+    },
+    "study_details_title": {
+        "ru": "Исследование ЭИТ", "en": "EIT study",
+        "zh": "EIT 检查", "vi": "Nghiên cứu EIT",
+    },
+    "study_details_date": {"ru": "Дата", "en": "Date", "zh": "日期", "vi": "Ngày"},
+    "study_details_duration": {"ru": "Длительность", "en": "Duration", "zh": "时长", "vi": "Thời lượng"},
+    "study_details_status": {"ru": "Статус", "en": "Status", "zh": "状态", "vi": "Trạng thái"},
+    "study_details_conclusion": {"ru": "Заключение", "en": "Conclusion", "zh": "结论", "vi": "Kết luận"},
+    "study_details_author": {"ru": "Автор", "en": "Author", "zh": "作者", "vi": "Tác giả"},
 
     # ── Patient screen ────────────────────────────────────────────────────
     "pat_card_title": {
@@ -347,11 +641,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "vi": "Chẩn đoán kèm theo",
     },
     "pat_icd_code": {
-        "ru": "МКБ-11",
-        "en": "ICD-11",
-        "zh": "ICD-11",
-        "vi": "ICD-11",
+        "ru": "МКБ",
+        "en": "ICD",
+        "zh": "ICD",
+        "vi": "ICD",
     },
+    "pat_icd_code_10": {"ru": "МКБ-10", "en": "ICD-10", "zh": "ICD-10", "vi": "ICD-10"},
+    "pat_icd_code_11": {"ru": "МКБ-11", "en": "ICD-11", "zh": "ICD-11", "vi": "ICD-11"},
     "pat_ivl": {
         "ru": "ИВЛ",
         "en": "Mechanical ventilation",
@@ -399,6 +695,131 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Link current study\nto selected patient",
         "zh": "将当前检查与\n所选患者关联",
         "vi": "Liên kết nghiên cứu hiện tại\nvới bệnh nhân đã chọn",
+    },
+    "pat_history_empty": {
+        "ru": "У выбранного пациента пока нет исследований",
+        "en": "The selected patient has no studies yet",
+        "zh": "所选患者尚无检查记录",
+        "vi": "Bệnh nhân đã chọn chưa có nghiên cứu",
+    },
+    "pat_icd_dialog_title": {
+        "ru": "Выбор диагноза",
+        "en": "Select diagnosis",
+        "zh": "选择诊断",
+        "vi": "Chọn chẩn đoán",
+    },
+    "pat_icd_search": {
+        "ru": "Поиск по коду или названию",
+        "en": "Search by code or title",
+        "zh": "按代码或名称搜索",
+        "vi": "Tìm theo mã hoặc tên",
+    },
+    "pat_invalid_diagnosis": {
+        "ru": "Выберите диагноз из активного справочника МКБ",
+        "en": "Select a diagnosis from the active ICD catalogue",
+        "zh": "请从当前 ICD 目录中选择诊断",
+        "vi": "Chọn chẩn đoán từ danh mục ICD đang hoạt động",
+    },
+    "pat_ivl_dialog_title": {
+        "ru": "Параметры ИВЛ",
+        "en": "Ventilation parameters",
+        "zh": "机械通气参数",
+        "vi": "Thông số thở máy",
+    },
+    "pat_ivl_mode": {"ru": "Режим", "en": "Mode", "zh": "模式", "vi": "Chế độ"},
+    "pat_ivl_fio2": {"ru": "FiO₂", "en": "FiO₂", "zh": "FiO₂", "vi": "FiO₂"},
+    "pat_ivl_peep": {"ru": "ПДКВ", "en": "PEEP", "zh": "PEEP", "vi": "PEEP"},
+    "pat_unsaved_title": {
+        "ru": "Несохранённые изменения", "en": "Unsaved changes",
+        "zh": "未保存的更改", "vi": "Thay đổi chưa lưu",
+    },
+    "pat_unsaved_message": {
+        "ru": "Закрыть карточку и отбросить несохранённые изменения?",
+        "en": "Close the card and discard unsaved changes?",
+        "zh": "关闭病历并放弃未保存的更改？",
+        "vi": "Đóng hồ sơ và bỏ các thay đổi chưa lưu?",
+    },
+    "pat_unsaved_discard": {
+        "ru": "Не сохранять",
+        "en": "Don't save",
+        "zh": "不保存",
+        "vi": "Không lưu",
+    },
+    "pat_unsaved_cancel": {
+        "ru": "Отмена",
+        "en": "Cancel",
+        "zh": "取消",
+        "vi": "Hủy",
+    },
+    "pat_validation_title": {
+        "ru": "Проверьте данные", "en": "Check the data",
+        "zh": "检查数据", "vi": "Kiểm tra dữ liệu",
+    },
+    "pat_validation_message": {
+        "ru": "Заполните обязательные поля корректными уникальными значениями.",
+        "en": "Fill in required fields with valid unique values.",
+        "zh": "请使用有效且唯一的值填写必填字段。",
+        "vi": "Điền các trường bắt buộc bằng giá trị hợp lệ và duy nhất.",
+    },
+    "pat_error_required": {
+        "ru": "Обязательное поле.", "en": "This field is required.",
+        "zh": "此字段为必填项。", "vi": "Trường này là bắt buộc.",
+    },
+    "pat_error_name_format": {
+        "ru": "Используйте имя без цифр.", "en": "Use a name without digits.",
+        "zh": "姓名中不能包含数字。", "vi": "Tên không được chứa chữ số.",
+    },
+    "pat_error_birth_future": {
+        "ru": "Дата рождения не может быть в будущем.",
+        "en": "The date of birth cannot be in the future.",
+        "zh": "出生日期不能晚于今天。", "vi": "Ngày sinh không thể ở tương lai.",
+    },
+    "pat_error_id_format": {
+        "ru": "Введите от 3 до 32 латинских букв, цифр или символов . _ -",
+        "en": "Enter 3–32 Latin letters, digits, or . _ -",
+        "zh": "请输入 3–32 个拉丁字母、数字或 . _ -",
+        "vi": "Nhập 3–32 chữ cái Latinh, chữ số hoặc . _ -",
+    },
+    "pat_error_duplicate": {
+        "ru": "Такое значение уже используется.",
+        "en": "This value is already in use.",
+        "zh": "该值已被使用。", "vi": "Giá trị này đã được sử dụng.",
+    },
+    "pat_error_record_format": {
+        "ru": "Введите номер истории болезни (до 64 символов).",
+        "en": "Enter a medical record number (up to 64 characters).",
+        "zh": "请输入病历号（最多 64 个字符）。",
+        "vi": "Nhập số hồ sơ bệnh án (tối đa 64 ký tự).",
+    },
+    "pat_error_weight_range": {
+        "ru": "Введите массу от 0,5 до 500 кг.",
+        "en": "Enter a weight from 0.5 to 500 kg.",
+        "zh": "请输入 0.5 至 500 千克的体重。",
+        "vi": "Nhập cân nặng từ 0,5 đến 500 kg.",
+    },
+    "pat_error_height_range": {
+        "ru": "Введите рост от 20 до 250 см.",
+        "en": "Enter a height from 20 to 250 cm.",
+        "zh": "请输入 20 至 250 厘米的身高。",
+        "vi": "Nhập chiều cao từ 20 đến 250 cm.",
+    },
+    "pat_error_chest_range": {
+        "ru": "Введите охват грудной клетки от 20 до 250 см.",
+        "en": "Enter a chest circumference from 20 to 250 cm.",
+        "zh": "请输入 20 至 250 厘米的胸围。",
+        "vi": "Nhập vòng ngực từ 20 đến 250 cm.",
+    },
+    "pat_error_invalid_value": {
+        "ru": "Проверьте значение поля.", "en": "Check this field value.",
+        "zh": "请检查该字段的值。", "vi": "Kiểm tra giá trị của trường này.",
+    },
+    "pat_saved_title": {
+        "ru": "Карточка сохранена", "en": "Card saved",
+        "zh": "病历已保存", "vi": "Đã lưu hồ sơ",
+    },
+    "pat_saved_message": {
+        "ru": "Данные пациента сохранены.", "en": "Patient data has been saved.",
+        "zh": "患者数据已保存。", "vi": "Đã lưu dữ liệu bệnh nhân.",
     },
 
     # ── Screen titles ──────────────────────────────────────────────────────
@@ -782,6 +1203,54 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "校准",
         "vi": "Hiệu chỉnh",
     },
+    "sq_status_waiting": {
+        "ru": "Ожидание данных диагностики электродов",
+        "en": "Waiting for electrode diagnostics",
+        "zh": "正在等待电极诊断数据",
+        "vi": "Đang chờ dữ liệu chẩn đoán điện cực",
+    },
+    "sq_status_ready": {
+        "ru": "Пригодных измерений: {percent}% · старт разрешён",
+        "en": "Usable measurements: {percent}% · start allowed",
+        "zh": "可用测量：{percent}% · 允许开始",
+        "vi": "Phép đo sử dụng được: {percent}% · được phép bắt đầu",
+    },
+    "sq_status_blocked": {
+        "ru": "Пригодных измерений: {percent}% · старт заблокирован",
+        "en": "Usable measurements: {percent}% · start blocked",
+        "zh": "可用测量：{percent}% · 已阻止开始",
+        "vi": "Phép đo sử dụng được: {percent}% · đã chặn bắt đầu",
+    },
+    "sq_calibration_running": {
+        "ru": "Выполняется калибровка…",
+        "en": "Calibration in progress…",
+        "zh": "正在校准…",
+        "vi": "Đang hiệu chỉnh…",
+    },
+    "sq_calibration_success": {
+        "ru": "Калибровка завершена и сохранена в исследовании",
+        "en": "Calibration completed and saved in the study",
+        "zh": "校准完成并已保存到检查中",
+        "vi": "Hiệu chỉnh hoàn tất và đã lưu vào nghiên cứu",
+    },
+    "sq_calibration_failed": {
+        "ru": "Калибровка отклонена: проверьте электроды {electrodes}",
+        "en": "Calibration failed: check electrodes {electrodes}",
+        "zh": "校准失败：请检查电极 {electrodes}",
+        "vi": "Hiệu chỉnh thất bại: kiểm tra điện cực {electrodes}",
+    },
+    "sq_calibration_no_study": {
+        "ru": "Сначала подготовьте исследование пациента",
+        "en": "Prepare a patient study before calibration",
+        "zh": "请先准备患者检查",
+        "vi": "Hãy chuẩn bị nghiên cứu bệnh nhân trước khi hiệu chỉnh",
+    },
+    "study_contact_quality_blocked": {
+        "ru": "Старт запрещён: исправьте критически плохой контакт электродов.",
+        "en": "Start blocked: correct critically poor electrode contact.",
+        "zh": "无法开始：请修复严重不良的电极接触。",
+        "vi": "Đã chặn bắt đầu: khắc phục tiếp xúc điện cực quá kém.",
+    },
     "sq_quality_tech_error": {
         "ru": "Техническая ошибка",
         "en": "Technical error",
@@ -850,6 +1319,66 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "电极带数",
         "vi": "Số vòng điện cực",
     },
+    "eit_electrode_order_label": {
+        "ru": "Порядок нумерации электродов",
+        "en": "Electrode numbering order",
+        "zh": "电极编号顺序",
+        "vi": "Thứ tự đánh số điện cực",
+    },
+    "eit_electrode_order_right_ccw": {
+        "ru": "№1 справа → против часовой стрелки",
+        "en": "No. 1 right → counter-clockwise",
+        "zh": "1号在右侧 → 逆时针",
+        "vi": "Số 1 bên phải → ngược chiều kim đồng hồ",
+    },
+    "eit_electrode_order_right_cw": {
+        "ru": "№1 справа → по часовой стрелке",
+        "en": "No. 1 right → clockwise",
+        "zh": "1号在右侧 → 顺时针",
+        "vi": "Số 1 bên phải → theo chiều kim đồng hồ",
+    },
+    "eit_electrode_order_sternum_cw": {
+        "ru": "№1 у грудины → по часовой стрелке",
+        "en": "No. 1 at sternum → clockwise",
+        "zh": "1号在胸骨处 → 顺时针",
+        "vi": "Số 1 tại xương ức → theo chiều kim đồng hồ",
+    },
+    "eit_electrode_order_sternum_ccw": {
+        "ru": "№1 у грудины → против часовой стрелки",
+        "en": "No. 1 at sternum → counter-clockwise",
+        "zh": "1号在胸骨处 → 逆时针",
+        "vi": "Số 1 tại xương ức → ngược chiều kim đồng hồ",
+    },
+    "eit_measurement_sequence_label": {
+        "ru": "Последовательность измерений (16×13)",
+        "en": "Measurement sequence (16×13)",
+        "zh": "测量序列（16×13）",
+        "vi": "Trình tự đo (16×13)",
+    },
+    "eit_sequence_adjacent_fixed": {
+        "ru": "Смежная: фиксированный порядок",
+        "en": "Adjacent: fixed order",
+        "zh": "相邻：固定顺序",
+        "vi": "Liền kề: thứ tự cố định",
+    },
+    "eit_sequence_adjacent_rotating": {
+        "ru": "Смежная: вращающийся порядок (EIDORS)",
+        "en": "Adjacent: rotating order (EIDORS)",
+        "zh": "相邻：旋转顺序（EIDORS）",
+        "vi": "Liền kề: thứ tự xoay (EIDORS)",
+    },
+    "eit_sequence_adjacent_reciprocal": {
+        "ru": "Смежная: взаимный порядок",
+        "en": "Adjacent: reciprocal order",
+        "zh": "相邻：互易顺序",
+        "vi": "Liền kề: thứ tự tương hỗ",
+    },
+    "eit_sequence_adjacent_reversed": {
+        "ru": "Смежная: обратный обход",
+        "en": "Adjacent: reverse scan",
+        "zh": "相邻：反向扫描",
+        "vi": "Liền kề: quét ngược",
+    },
     "eit_unit_ma": {
         "ru": "мА",
         "en": "mA",
@@ -904,6 +1433,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "重置设置",
         "vi": "Đặt lại cài đặt",
     },
+    "eit_reset_confirm_title": {
+        "ru": "Сброс настроек ЭИТ",
+        "en": "Reset EIT settings",
+        "zh": "重置 EIT 设置",
+        "vi": "Đặt lại cài đặt EIT",
+    },
+    "eit_reset_confirm_message": {
+        "ru": "Восстановить настройки ЭИТ по умолчанию?",
+        "en": "Restore the default EIT settings?",
+        "zh": "恢复默认 EIT 设置吗？",
+        "vi": "Khôi phục cài đặt EIT mặc định?",
+    },
 
     # ── Export data screen ─────────────────────────────────────────────────
     "exp_format_title": {
@@ -911,6 +1452,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Export format",
         "zh": "导出格式",
         "vi": "Định dạng xuất",
+    },
+    "exp_data_title": {
+        "ru": "Состав данных",
+        "en": "Data categories",
+        "zh": "数据类别",
+        "vi": "Danh mục dữ liệu",
     },
     "exp_history_title": {
         "ru": "История исследований",
@@ -950,6 +1497,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "病理呼吸类型",
         "vi": "Loại thở bệnh lý",
     },
+    "eit_diagnosis_catalog_label": {
+        "ru": "Справочник диагнозов",
+        "en": "Diagnosis catalogue",
+        "zh": "诊断目录",
+        "vi": "Danh mục chẩn đoán",
+    },
+    "eit_icd10": {"ru": "МКБ-10", "en": "ICD-10", "zh": "ICD-10", "vi": "ICD-10"},
+    "eit_icd11": {"ru": "МКБ-11", "en": "ICD-11", "zh": "ICD-11", "vi": "ICD-11"},
     "analysis_tab_global": {
         "ru": "Аэрация\nГЛОБАЛЬНАЯ",
         "en": "GLOBAL\nAeration",
@@ -961,6 +1516,27 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "REGIONAL\nAeration",
         "zh": "区域\n通气",
         "vi": "Thông khí\nKHU VỰC",
+    },
+    "analysis_interval": {
+        "ru": "Интервал", "en": "Interval", "zh": "区间", "vi": "Khoảng",
+    },
+    "analysis_cycles": {
+        "ru": "Циклы", "en": "Breaths", "zh": "呼吸周期", "vi": "Chu kỳ",
+    },
+    "analysis_all_cycles": {
+        "ru": "Все", "en": "All", "zh": "全部", "vi": "Tất cả",
+    },
+    "analysis_seconds_short": {
+        "ru": "с", "en": "s", "zh": "秒", "vi": "giây",
+    },
+    "analysis_quality": {
+        "ru": "Качество", "en": "Quality", "zh": "质量", "vi": "Chất lượng",
+    },
+    "analysis_cycles_found": {
+        "ru": "циклов", "en": "cycles", "zh": "周期", "vi": "chu kỳ",
+    },
+    "analysis_samples": {
+        "ru": "отсч.", "en": "samples", "zh": "样本", "vi": "mẫu",
     },
     "analysis_sub_pca": {
         "ru": "Анализ PCA",
@@ -985,6 +1561,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Current breathing type",
         "zh": "当前呼吸类型",
         "vi": "Loại thở hiện tại",
+    },
+    "analysis_bt_undetermined": {
+        "ru": "Не определено", "en": "Undetermined",
+        "zh": "未确定", "vi": "Chưa xác định",
+    },
+    "analysis_manual_type": {
+        "ru": "Ручная отметка специалиста", "en": "Specialist manual assessment",
+        "zh": "专家手动评估", "vi": "Đánh giá thủ công của chuyên gia",
     },
     "analysis_bt_eupnea":            {"ru": "Эупноэ",                   "en": "Eupnea",               "zh": "正常呼吸",       "vi": "Thở bình thường"},
     "analysis_bt_periodic":          {"ru": "Периодическое дыхание",    "en": "Periodic breathing",   "zh": "周期性呼吸",     "vi": "Thở tuần hoàn"},
@@ -1262,6 +1846,129 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Cancel",
         "zh": "取消",
         "vi": "Hủy",
+    },
+
+    # ── Shared UI presentation ────────────────────────────────────────────
+    "common_ok": {"ru": "ОК", "en": "OK", "zh": "确定", "vi": "Đồng ý"},
+    "common_cancel": {"ru": "Отмена", "en": "Cancel", "zh": "取消", "vi": "Hủy"},
+    "common_yes": {"ru": "Да", "en": "Yes", "zh": "是", "vi": "Có"},
+    "common_no": {"ru": "Нет", "en": "No", "zh": "否", "vi": "Không"},
+    "monitor_reason_unknown": {
+        "ru": "причина не определена", "en": "reason not specified",
+        "zh": "原因未指定", "vi": "chưa xác định nguyên nhân",
+    },
+    "ui_reason_label": {"ru": "Причина", "en": "Reason", "zh": "原因", "vi": "Nguyên nhân"},
+    "ui_algorithm_version": {
+        "ru": "Версия алгоритма", "en": "Algorithm version",
+        "zh": "算法版本", "vi": "Phiên bản thuật toán",
+    },
+    "study_status_unknown": {
+        "ru": "Статус не определён", "en": "Unknown status",
+        "zh": "状态未知", "vi": "Trạng thái không xác định",
+    },
+    "study_conclusion_start_failed": {
+        "ru": "Не удалось начать мониторинг", "en": "Monitoring failed to start",
+        "zh": "监测启动失败", "vi": "Không thể bắt đầu giám sát",
+    },
+    "analysis_param_sample_rate": {
+        "ru": "Частота дискретизации", "en": "Sample rate",
+        "zh": "采样率", "vi": "Tần số lấy mẫu",
+    },
+    "analysis_param_smoothing": {
+        "ru": "Отсчётов сглаживания", "en": "Smoothing samples",
+        "zh": "平滑样本数", "vi": "Số mẫu làm mượt",
+    },
+    "analysis_param_min_cycles": {
+        "ru": "Минимум полных циклов", "en": "Minimum complete cycles",
+        "zh": "最少完整周期", "vi": "Số chu kỳ hoàn chỉnh tối thiểu",
+    },
+    "analysis_param_rr_range": {
+        "ru": "Диапазон ЧД", "en": "Respiratory-rate range",
+        "zh": "呼吸频率范围", "vi": "Khoảng nhịp thở",
+    },
+    "analysis_unit_hz": {"ru": "Гц", "en": "Hz", "zh": "赫兹", "vi": "Hz"},
+    "sys_mode_simulation": {
+        "ru": "Симуляция", "en": "Simulation", "zh": "模拟", "vi": "Mô phỏng",
+    },
+    "sys_mode_device": {
+        "ru": "Устройство", "en": "Device", "zh": "设备", "vi": "Thiết bị",
+    },
+    "sys_mode_fromfile": {
+        "ru": "Из файла", "en": "From file", "zh": "来自文件", "vi": "Từ tệp",
+    },
+    "sys_not_configured": {
+        "ru": "не настроено", "en": "not configured",
+        "zh": "未配置", "vi": "chưa cấu hình",
+    },
+    "svc_search_placeholder": {
+        "ru": "Поиск", "en": "Search", "zh": "搜索", "vi": "Tìm kiếm",
+    },
+    "exp_category_metadata": {
+        "ru": "Метаданные и пациент", "en": "Metadata and patient",
+        "zh": "元数据和患者", "vi": "Siêu dữ liệu và bệnh nhân",
+    },
+    "exp_category_metrics": {
+        "ru": "Итоговые показатели", "en": "Summary metrics",
+        "zh": "汇总指标", "vi": "Chỉ số tổng hợp",
+    },
+    "exp_category_trends": {"ru": "Тренды", "en": "Trends", "zh": "趋势", "vi": "Xu hướng"},
+    "exp_category_events": {"ru": "События", "en": "Events", "zh": "事件", "vi": "Sự kiện"},
+    "exp_category_raw": {
+        "ru": "Сырые данные", "en": "Raw data", "zh": "原始数据", "vi": "Dữ liệu thô",
+    },
+    "exp_privacy_warning": {
+        "ru": "Экспорт может содержать персональные данные.",
+        "en": "The export may contain personal data.",
+        "zh": "导出内容可能包含个人数据。",
+        "vi": "Dữ liệu xuất có thể chứa thông tin cá nhân.",
+    },
+    "exp_no_studies": {
+        "ru": "Нет сохранённых исследований", "en": "No saved studies",
+        "zh": "没有已保存的检查", "vi": "Không có nghiên cứu đã lưu",
+    },
+    "exp_estimate": {
+        "ru": "Выбрано исследований: {count}; оценка размера: {size}",
+        "en": "Selected studies: {count}; estimated size: {size}",
+        "zh": "已选检查：{count}；预计大小：{size}",
+        "vi": "Nghiên cứu đã chọn: {count}; dung lượng ước tính: {size}",
+    },
+    "exp_detail_patient": {"ru": "Пациент", "en": "Patient", "zh": "患者", "vi": "Bệnh nhân"},
+    "exp_detail_status": {"ru": "Статус", "en": "Status", "zh": "状态", "vi": "Trạng thái"},
+    "exp_detail_created": {"ru": "Создано", "en": "Created", "zh": "创建时间", "vi": "Đã tạo"},
+    "exp_detail_conclusion": {"ru": "Заключение", "en": "Conclusion", "zh": "结论", "vi": "Kết luận"},
+    "exp_selection_error": {
+        "ru": "Выберите хотя бы одно исследование и категорию данных.",
+        "en": "Select at least one study and one data category.",
+        "zh": "请至少选择一项检查和一个数据类别。",
+        "vi": "Chọn ít nhất một nghiên cứu và một loại dữ liệu.",
+    },
+    "exp_generation_error": {
+        "ru": "Не удалось сформировать экспорт. Подробности записаны в технический журнал.",
+        "en": "The export could not be generated. Details were written to the technical log.",
+        "zh": "无法生成导出。详细信息已写入技术日志。",
+        "vi": "Không thể tạo bản xuất. Chi tiết đã được ghi vào nhật ký kỹ thuật.",
+    },
+    "exp_saved": {
+        "ru": "Экспорт сохранён:\n{path}", "en": "Export saved:\n{path}",
+        "zh": "导出已保存：\n{path}", "vi": "Đã lưu bản xuất:\n{path}",
+    },
+    "rep_default_title": {
+        "ru": "Отчёт ЭИТ", "en": "EIT report", "zh": "EIT 报告", "vi": "Báo cáo EIT",
+    },
+    "rep_generation_error": {
+        "ru": "Не удалось сформировать отчёт. Проверьте выбранное исследование и период.",
+        "en": "The report could not be generated. Check the selected study and period.",
+        "zh": "无法生成报告。请检查所选检查和时间段。",
+        "vi": "Không thể tạo báo cáo. Hãy kiểm tra nghiên cứu và khoảng thời gian đã chọn.",
+    },
+    "rep_preview_error": {
+        "ru": "Не удалось открыть предварительный просмотр отчёта.",
+        "en": "The report preview could not be opened.",
+        "zh": "无法打开报告预览。", "vi": "Không thể mở bản xem trước báo cáo.",
+    },
+    "rep_print_error": {
+        "ru": "Не удалось напечатать отчёт.", "en": "The report could not be printed.",
+        "zh": "无法打印报告。", "vi": "Không thể in báo cáo.",
     },
 }
 

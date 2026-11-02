@@ -7,18 +7,20 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QFrame, QSizePolicy,
+    QDoubleSpinBox, QSpinBox, QComboBox, QFrame, QSizePolicy, QMessageBox,
 )
 from PySide6.QtCore import Qt
 from ..styles import C, configure_action_btn, FONT_BASE, FONT_LABEL, FONT_BTN, FONT_SMALL
 from ..i18n import t, i18n
+from ..application import DiagnosisCatalogService, EITSettingsService
+from ..domain import AcquisitionSettings
 
 
 # ── Style helpers ─────────────────────────────────────────────────────────────
 
 def _field_style() -> str:
     return f"""
-        QLineEdit {{
+        QDoubleSpinBox, QSpinBox, QComboBox {{
             background-color: {C['bg_card']};
             color: {C['text']};
             border: 1px solid {C['border']};
@@ -27,7 +29,7 @@ def _field_style() -> str:
             font-size: {FONT_BASE}px;
             min-height: 36px;
         }}
-        QLineEdit:focus {{ border-color: {C['blue_light']}; }}
+        QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {C['blue_light']}; }}
     """
 
 def _toggle_active_style() -> str:
@@ -74,11 +76,9 @@ def _sublabel_style() -> str:
 class _ParamRow(QWidget):
     """Label / [input field] [unit]."""
 
-    def __init__(self, label_key: str, placeholder_key: str, unit_key: str,
-                 default: str = "", parent=None):
+    def __init__(self, label_key: str, unit_key: str, control: QWidget, parent=None):
         super().__init__(parent)
         self._label_key = label_key
-        self._placeholder_key = placeholder_key
         self._unit_key = unit_key
         self.setStyleSheet("background:transparent;")
 
@@ -93,8 +93,7 @@ class _ParamRow(QWidget):
         row = QHBoxLayout()
         row.setSpacing(6)
 
-        self._edit = QLineEdit(default)
-        self._edit.setPlaceholderText(t(placeholder_key))
+        self._edit = control
         self._edit.setStyleSheet(_field_style())
         row.addWidget(self._edit, stretch=1)
 
@@ -109,8 +108,44 @@ class _ParamRow(QWidget):
 
     def retranslate(self):
         self._lbl.setText(t(self._label_key))
-        self._edit.setPlaceholderText(t(self._placeholder_key))
         self._lbl_unit.setText(t(self._unit_key))
+
+
+class _ComboRow(QWidget):
+    """Label / combo box whose stable values are independent of UI language."""
+
+    def __init__(self, label_key: str, options: tuple[tuple[str, str], ...], parent=None):
+        super().__init__(parent)
+        self._label_key = label_key
+        self._options = options
+        self.setStyleSheet("background:transparent;")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self._lbl = QLabel(t(label_key))
+        self._lbl.setStyleSheet(_label_style())
+        lay.addWidget(self._lbl)
+        self._combo = QComboBox()
+        self._combo.setStyleSheet(_field_style())
+        lay.addWidget(self._combo)
+        self.retranslate()
+
+    def value(self) -> str:
+        return str(self._combo.currentData())
+
+    def set_value(self, value: str) -> None:
+        index = self._combo.findData(value)
+        self._combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def retranslate(self):
+        current = self.value() if self._combo.count() else None
+        self._lbl.setText(t(self._label_key))
+        self._combo.clear()
+        for value, label_key in self._options:
+            self._combo.addItem(t(label_key), value)
+        if current is not None:
+            self.set_value(current)
 
 
 # ── Группа переключателей (два варианта) ──────────────────────────────────────
@@ -176,14 +211,16 @@ class _ToggleGroup(QWidget):
 
 class EITSettingsScreen(QWidget):
 
-    # Default hardware values
-    _DEFAULT_CURRENT    = "0,5–5"
-    _DEFAULT_FREQ       = "10–500"
-    _DEFAULT_ELECTRODES = "16"
-    _DEFAULT_BELTS      = "1"
-
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        diagnosis_catalog: DiagnosisCatalogService | None = None,
+        settings_service: EITSettingsService | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
+        self._diagnosis_catalog = diagnosis_catalog
+        self._settings_service = settings_service
+        settings = settings_service.current if settings_service else AcquisitionSettings()
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
@@ -200,22 +237,23 @@ class EITSettingsScreen(QWidget):
         left.setSpacing(20)
         cols.addLayout(left, stretch=45)
 
-        self._row_current = _ParamRow(
-            "eit_current_label", "eit_current_placeholder", "eit_unit_ma",
-            default=self._DEFAULT_CURRENT,
-        )
-        self._row_freq = _ParamRow(
-            "eit_freq_label", "eit_freq_placeholder", "eit_unit_khz",
-            default=self._DEFAULT_FREQ,
-        )
-        self._row_electrodes = _ParamRow(
-            "eit_electrodes_label", "eit_electrodes_label", "eit_unit_pcs",
-            default=self._DEFAULT_ELECTRODES,
-        )
-        self._row_belts = _ParamRow(
-            "eit_belts_label", "eit_belts_label", "eit_unit_pcs",
-            default=self._DEFAULT_BELTS,
-        )
+        current = QDoubleSpinBox()
+        current.setRange(0.5, 5.0)
+        current.setSingleStep(0.1)
+        current.setDecimals(1)
+        frequency = QDoubleSpinBox()
+        frequency.setRange(10.0, 500.0)
+        frequency.setSingleStep(10.0)
+        frequency.setDecimals(0)
+        electrodes = QSpinBox()
+        electrodes.setRange(16, 16)
+        belts = QSpinBox()
+        belts.setRange(1, 1)
+
+        self._row_current = _ParamRow("eit_current_label", "eit_unit_ma", current)
+        self._row_freq = _ParamRow("eit_freq_label", "eit_unit_khz", frequency)
+        self._row_electrodes = _ParamRow("eit_electrodes_label", "eit_unit_pcs", electrodes)
+        self._row_belts = _ParamRow("eit_belts_label", "eit_unit_pcs", belts)
 
         for row in (self._row_current, self._row_freq,
                     self._row_electrodes, self._row_belts):
@@ -246,6 +284,43 @@ class EITSettingsScreen(QWidget):
 
         right.addStretch()
 
+        self._grp_diagnosis_catalog = _ToggleGroup(
+            "eit_diagnosis_catalog_label", "eit_icd10", "eit_icd11",
+            default=(
+                "b" if diagnosis_catalog and diagnosis_catalog.classification == "ICD-11"
+                else "a"
+            ),
+        )
+        right.addWidget(self._grp_diagnosis_catalog)
+
+        right.addStretch()
+
+        protocol_controls = QHBoxLayout()
+        protocol_controls.setSpacing(40)
+        self._row_electrode_order = _ComboRow(
+            "eit_electrode_order_label",
+            (
+                ("right_ccw", "eit_electrode_order_right_ccw"),
+                ("right_cw", "eit_electrode_order_right_cw"),
+                ("sternum_cw", "eit_electrode_order_sternum_cw"),
+                ("sternum_ccw", "eit_electrode_order_sternum_ccw"),
+            ),
+        )
+        self._row_measurement_sequence = _ComboRow(
+            "eit_measurement_sequence_label",
+            (
+                ("adjacent_fixed", "eit_sequence_adjacent_fixed"),
+                ("adjacent_rotating", "eit_sequence_adjacent_rotating"),
+                ("adjacent_reciprocal", "eit_sequence_adjacent_reciprocal"),
+                ("adjacent_reversed", "eit_sequence_adjacent_reversed"),
+            ),
+        )
+        protocol_controls.addWidget(self._row_electrode_order, stretch=1)
+        protocol_controls.addWidget(self._row_measurement_sequence, stretch=1)
+        outer.addLayout(protocol_controls)
+
+        self._load_settings(settings)
+
         # ── Bottom action bar ─────────────────────────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -270,6 +345,7 @@ class EITSettingsScreen(QWidget):
 
         self._btn_save = QPushButton(t("eit_btn_save"))
         configure_action_btn(self._btn_save, 280)
+        self._btn_save.clicked.connect(self._save)
         bottom.addWidget(self._btn_save)
 
         outer.addLayout(bottom)
@@ -279,12 +355,61 @@ class EITSettingsScreen(QWidget):
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _reset(self):
-        self._row_current._edit.setText(self._DEFAULT_CURRENT)
-        self._row_freq._edit.setText(self._DEFAULT_FREQ)
-        self._row_electrodes._edit.setText(self._DEFAULT_ELECTRODES)
-        self._row_belts._edit.setText(self._DEFAULT_BELTS)
-        self._grp_color._select("a")
-        self._grp_pathology._select("a")
+        dialog = QMessageBox(
+            QMessageBox.Question,
+            t("eit_reset_confirm_title"),
+            t("eit_reset_confirm_message"),
+            QMessageBox.Yes | QMessageBox.No,
+            self,
+        )
+        dialog.setDefaultButton(QMessageBox.No)
+        dialog.button(QMessageBox.Yes).setText(t("common_yes"))
+        dialog.button(QMessageBox.No).setText(t("common_no"))
+        answer = dialog.exec()
+        if answer != QMessageBox.Yes:
+            return
+        defaults = (
+            self._settings_service.reset()
+            if self._settings_service is not None
+            else AcquisitionSettings()
+        )
+        self._load_settings(defaults)
+        self._grp_diagnosis_catalog._select("a")
+        if self._diagnosis_catalog is not None:
+            self._diagnosis_catalog.set_classification("ICD-10")
+
+    def _save(self):
+        settings = self._settings_from_controls()
+        if self._settings_service is not None:
+            self._settings_service.save(settings)
+        if self._diagnosis_catalog is not None:
+            classification = (
+                "ICD-10" if self._grp_diagnosis_catalog._state == "a" else "ICD-11"
+            )
+            self._diagnosis_catalog.set_classification(classification)
+
+    def _settings_from_controls(self) -> AcquisitionSettings:
+        return AcquisitionSettings(
+            injection_current_ma=self._row_current._edit.value(),
+            injection_frequency_khz=self._row_freq._edit.value(),
+            electrode_count=self._row_electrodes._edit.value(),
+            belt_count=self._row_belts._edit.value(),
+            sample_rate_hz=25.0,
+            electrode_order=self._row_electrode_order.value(),
+            measurement_sequence=self._row_measurement_sequence.value(),
+            two_color_visualization=self._grp_color._state == "a",
+            pathology_detection=self._grp_pathology._state == "a",
+        )
+
+    def _load_settings(self, settings: AcquisitionSettings) -> None:
+        self._row_current._edit.setValue(settings.injection_current_ma)
+        self._row_freq._edit.setValue(settings.injection_frequency_khz)
+        self._row_electrodes._edit.setValue(settings.electrode_count)
+        self._row_belts._edit.setValue(settings.belt_count)
+        self._row_electrode_order.set_value(settings.electrode_order)
+        self._row_measurement_sequence.set_value(settings.measurement_sequence)
+        self._grp_color._select("a" if settings.two_color_visualization else "b")
+        self._grp_pathology._select("a" if settings.pathology_detection else "b")
 
     # ── Retranslate ────────────────────────────────────────────────────────────
 
@@ -292,8 +417,11 @@ class EITSettingsScreen(QWidget):
         for row in (self._row_current, self._row_freq,
                     self._row_electrodes, self._row_belts):
             row.retranslate()
+        self._row_electrode_order.retranslate()
+        self._row_measurement_sequence.retranslate()
         self._grp_color.retranslate()
         self._grp_pathology.retranslate()
+        self._grp_diagnosis_catalog.retranslate()
         self._btn_start.setText(t("btn_start"))
         self._btn_reset.setText(t("eit_btn_reset"))
         self._btn_save.setText(t("eit_btn_save"))

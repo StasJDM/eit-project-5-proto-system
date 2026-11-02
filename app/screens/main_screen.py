@@ -12,19 +12,19 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy, QGridLayout
 )
-from PySide6.QtCore import Qt, QTimer, QTime
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
-from ..mock_data import BreathingSimulator
+from ..application import EventMarkerService, MonitoringData, MonitoringView
+from ..domain import DataQuality
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounterPair
 from ..widgets.lung_viz import LungVizWidget
 from ..widgets.waveform_panel import WaveformPanel
 from ..styles import C, FONT_SMALL, FONT_LABEL, FONT_VALUE
 from ..i18n import t, i18n
+from ..ui_text import quality_reason_text
 
-# How often we push a new sample to the buffer (40 ms ≈ 25 Hz)
-SAMPLE_MS = 40
 # How often we repaint the screen (100 ms = 10 fps — enough for visual smoothness)
 PAINT_MS  = 100
 
@@ -61,7 +61,7 @@ class _ParamBox(QFrame):
 
         lay.addStretch(1)
 
-        self._lbl_val = QLabel("0.0")
+        self._lbl_val = QLabel("—")
         self._lbl_val.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self._lbl_val.setMinimumWidth(52)
         self._lbl_val.setStyleSheet(
@@ -78,11 +78,16 @@ class _ParamBox(QFrame):
             )
             lay.addWidget(lbl_u)
 
-    def set_value(self, v):
-        if isinstance(v, float):
+    def set_value(self, v, reason: str | None = None):
+        if v is None:
+            self._lbl_val.setText("—")
+        elif isinstance(v, float):
             self._lbl_val.setText(f"{v:.1f}")
         else:
             self._lbl_val.setText(str(v))
+        self.setToolTip(
+            f"{t('ui_reason_label')}: {quality_reason_text(reason)}" if reason else ""
+        )
 
 
 # ── Left panel ────────────────────────────────────────────────────────────────
@@ -118,7 +123,7 @@ class LeftPanel(QWidget):
         self.box_t   = _ParamBox("T, %",  "")
         self.box_r   = _ParamBox("R, %",  "")
         self.box_l   = _ParamBox("L, %",  "")
-        self.box_lr  = _ParamBox("L/R",   "")
+        self.box_lr  = _ParamBox("R/L",   "")
         self.box_vd  = _ParamBox("V/D",   "")
         self.box_tvi = _ParamBox("TVi",  "")
 
@@ -151,8 +156,6 @@ class LeftPanel(QWidget):
         self.btn_start.setObjectName("btn_start")
         self.btn_start.setFixedHeight(52)
         self.btn_start.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._is_running = False
-        self.btn_start.clicked.connect(self._toggle_start)
         lay.addWidget(self.btn_start)
 
         lay.addSpacing(4)
@@ -163,9 +166,9 @@ class LeftPanel(QWidget):
 
         i18n.language_changed.connect(self.retranslate)
 
-    def _toggle_start(self):
-        self._is_running = not self._is_running
-        if self._is_running:
+    def sync_start(self, running: bool):
+        self.btn_start.setProperty("monitoring_running", running)
+        if running:
             self.btn_start.setText(t("btn_stop"))
             self.btn_start.setStyleSheet(f"""
                 QPushButton {{
@@ -186,7 +189,7 @@ class LeftPanel(QWidget):
 
     def retranslate(self):
         self.counters.retranslate()
-        if not self._is_running:
+        if not bool(self.btn_start.property("monitoring_running")):
             self.btn_start.setText(t("btn_start"))
         else:
             self.btn_start.setText(t("btn_stop"))
@@ -198,30 +201,57 @@ class LeftPanel(QWidget):
         return f
 
     def update_params(self, snap):
-        self.box_t.set_value(snap.t_pct)
-        self.box_r.set_value(snap.r_pct)
-        self.box_l.set_value(snap.l_pct)
-        self.box_lr.set_value(snap.lr_ratio)
-        self.box_vd.set_value(snap.vd_ratio)
-        self.box_tvi.set_value(snap.tvi)
-        self.box_eeli.set_value(snap.eeli)
-        self.box_eili.set_value(snap.eili)
-        self.lung_viz.update_state(snap.phase, snap.roi_pct)
+        self.box_t.set_value(snap.t_pct, snap.quality_reason)
+        self.box_r.set_value(snap.r_pct, snap.status_for("r_pct").reason)
+        self.box_l.set_value(snap.l_pct, snap.status_for("l_pct").reason)
+        self.box_lr.set_value(snap.lr_ratio, snap.status_for("rl_ratio").reason)
+        self.box_vd.set_value(snap.vd_ratio, snap.status_for("vd_ratio").reason)
+        self.box_tvi.set_value(snap.tvi, snap.status_for("tvi").reason)
+        self.box_eeli.set_value(snap.eeli, snap.status_for("eeli").reason)
+        self.box_eili.set_value(snap.eili, snap.status_for("eili").reason)
+        self.lung_viz.update_state(
+            snap.phase,
+            snap.roi_pct,
+            getattr(snap, "reconstruction_map", None),
+            getattr(snap, "absolute_conductivity_map", None),
+        )
 
 
 # ── Main screen ───────────────────────────────────────────────────────────────
 
 class MainScreen(QWidget):
-    """Assembled main monitoring screen with live mock data."""
+    """Assembled main monitoring screen backed by an injected read model."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        monitoring: MonitoringData,
+        parent=None,
+        *,
+        display_window_sec: float = 60.0,
+        marker_service: EventMarkerService | None = None,
+    ):
         super().__init__(parent)
+        self._monitoring = monitoring
+        self._marker_service = marker_service
+        if display_window_sec <= 0:
+            raise ValueError("display_window_sec must be positive")
+        self._display_window_sec = float(display_window_sec)
 
-        self._sim = BreathingSimulator()
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        lay = QHBoxLayout(self)
+        self._quality_banner = QLabel()
+        self._quality_banner.setObjectName("monitoring_quality_banner")
+        self._quality_banner.setAlignment(Qt.AlignCenter)
+        self._quality_banner.setFixedHeight(28)
+        root.addWidget(self._quality_banner)
+
+        body = QWidget()
+        lay = QHBoxLayout(body)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
+        root.addWidget(body, stretch=1)
 
         self.left    = LeftPanel()
         self.waves   = WaveformPanel()
@@ -230,10 +260,6 @@ class MainScreen(QWidget):
         lay.addWidget(self.waves, stretch=1)
 
         # ── Timers ────────────────────────────────────────────────────────────
-        self._sample_timer = QTimer(self)
-        self._sample_timer.timeout.connect(self._on_sample)
-        self._sample_timer.start(SAMPLE_MS)
-
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self._on_paint)
         self._paint_timer.start(PAINT_MS)
@@ -243,27 +269,17 @@ class MainScreen(QWidget):
         self._on_timers_updated(*timers.values())
 
         # Начальные значения без пропусков до первого тика таймера
-        snap = self._sim.snapshot
-        self.left.update_params(snap)
-        self.waves.update_all(
-            self._sim.get_waveforms(), snap.rr, snap.roi_pct,
-            r_pct=snap.r_pct, l_pct=snap.l_pct,
-            trends={
-                "global": snap.trend_global,
-                "r": snap.trend_r,
-                "l": snap.trend_l,
-                "rois": snap.roi_trends,
-            },
-        )
+        self._render(self._monitoring.read_view(self._display_window_sec))
+        i18n.language_changed.connect(self._on_paint)
 
     # ── Timer callbacks ───────────────────────────────────────────────────────
 
-    def _on_sample(self):
-        self._sim.step()
+    def _on_paint(self, *_args):
+        self._render(self._monitoring.read_view(self._display_window_sec))
 
-    def _on_paint(self):
-        snap  = self._sim.snapshot
-        waves = self._sim.get_waveforms()
+    def _render(self, view: MonitoringView):
+        snap = view.snapshot
+        waves = view.waveforms
         self.left.update_params(snap)
         self.waves.update_all(
             waves, snap.rr, snap.roi_pct,
@@ -274,6 +290,38 @@ class MainScreen(QWidget):
                 "l": snap.trend_l,
                 "rois": snap.roi_trends,
             },
+        )
+        events = (
+            self._marker_service.list_for_current_study()
+            if self._marker_service is not None else ()
+        )
+        self.waves.set_event_markers(events, waves["time"])
+        self._update_quality_banner(snap)
+
+    def _update_quality_banner(self, snap):
+        key = {
+            DataQuality.VALID: "monitor_quality_valid",
+            DataQuality.DEGRADED: "monitor_quality_degraded",
+            DataQuality.STALE: "monitor_quality_stale",
+            DataQuality.UNAVAILABLE: "monitor_quality_unavailable",
+        }[snap.quality]
+        text = t(key)
+        if snap.quality_reason:
+            text += f" — {quality_reason_text(snap.quality_reason)}"
+        color = {
+            DataQuality.VALID: C["ok_hover"],
+            DataQuality.DEGRADED: C["warn"],
+            DataQuality.STALE: C["warn"],
+            DataQuality.UNAVAILABLE: C["alarm"],
+        }[snap.quality]
+        self._quality_banner.setText(text)
+        self._quality_banner.setToolTip(
+            f"{t('ui_reason_label')}: {quality_reason_text(snap.quality_reason)}; "
+            f"{t('ui_algorithm_version')}: {snap.algorithm_version}"
+        )
+        self._quality_banner.setStyleSheet(
+            f"background:{C['bg_card']};color:{color};border-bottom:1px solid {color};"
+            f"font-size:{FONT_LABEL}px;font-weight:bold;"
         )
 
     def _on_timers_updated(self, eit: str, es: str):

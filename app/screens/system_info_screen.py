@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
+from ..config import AppConfig, DataMode
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
 from ..i18n import t, i18n, LANGUAGES
 
@@ -173,8 +174,9 @@ _NUM_W = 56
 class SystemInfoScreen(QWidget):
     """System information table — 12 parameters from spec Table 7.5."""
 
-    def __init__(self, parent=None):
+    def __init__(self, config: AppConfig | None = None, parent=None):
         super().__init__(parent)
+        self._config = config or AppConfig.from_env()
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
@@ -211,6 +213,7 @@ class SystemInfoScreen(QWidget):
         self._val_lbls: list[tuple[str, QLabel]] = []   # (i18n_key or "", label)
         self._datetime_lbl: QLabel | None = None
         self._lang_val_lbl: QLabel | None = None
+        self._device_model_lbl: QLabel | None = None
         self._btn_change: QPushButton | None = None
 
         for i, row in enumerate(_ROWS):
@@ -329,9 +332,14 @@ class SystemInfoScreen(QWidget):
             val_lay.addWidget(self._btn_change)
 
         else:
+            if lbl_key == "sys_lbl_device_model":
+                val_key = self._device_mode_text()
+                val_is_i18n = False
             value = t(val_key) if val_is_i18n else val_key
             i18n_key = val_key if val_is_i18n else ""
             lbl = self._dcell(value, bold=True)
+            if lbl_key == "sys_lbl_device_model":
+                self._device_model_lbl = lbl
             self._val_lbls.append((i18n_key, lbl))
             val_lay.addWidget(lbl)
             val_lay.addStretch()
@@ -369,6 +377,16 @@ class SystemInfoScreen(QWidget):
 
         if self._btn_change is not None:
             self._btn_change.setText(t("sys_lang_change_btn"))
+        if self._device_model_lbl is not None:
+            self._device_model_lbl.setText(self._device_mode_text())
+
+    def _device_mode_text(self) -> str:
+        if self._config.data_mode is DataMode.SIMULATION:
+            return t("sys_mode_simulation")
+        if self._config.data_mode is DataMode.FROMFILE:
+            return f"{t('sys_mode_fromfile')} ({self._config.fromfile_path.name})"
+        endpoint = self._config.device_endpoint or t("sys_not_configured")
+        return f"{t('sys_mode_device')} ({endpoint})"
 
     # ── Cell helpers ──────────────────────────────────────────────────────────
 

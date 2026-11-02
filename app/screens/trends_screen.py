@@ -13,15 +13,20 @@ Layout per tab (tabs 1 & 2):
   [Старт] [Масштаб] [Маркер событий] … [Выход]
 """
 
+from datetime import timedelta, timezone
+from uuid import UUID
+
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QFrame, QStackedWidget, QSizePolicy,
+    QFrame, QStackedWidget, QSizePolicy, QComboBox, QSlider,
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QBrush
 
-from ..mock_data import BreathingSimulator, DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, BREATHS_IN_WINDOW
+from ..application import EventMarkerService, MonitoringData, TrendService
+from ..domain import DataQuality, EventCategory, StudyStatus
+from ..application.monitoring import DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, BREATHS_IN_WINDOW
 from ..waveform_draw import draw_filled_waveform
 from ..styles import (
     C, AERATION_COLOR_T, AERATION_COLOR_R, AERATION_COLOR_L,
@@ -30,6 +35,7 @@ from ..styles import (
     TAB_BAR_FONT, TAB_BAR_SUB_FONT, FONT_BTN, FONT_LABEL, FONT_SMALL, FONT_VALUE,
 )
 from ..i18n import t, i18n
+from ..ui_text import study_status_text
 
 
 # ── Typography (12″ display) — из styles + локальные акценты ─────────────────
@@ -67,16 +73,8 @@ _REGIONAL_ROW_WEIGHTS = [2, 1, 1, 1, 1]
 
 # ── Mock helpers ──────────────────────────────────────────────────────────────
 
-def _static_bars(
-    seed: int = 0,
-    base: float = 55.0,
-    noise: float = 10.0,
-    n: int = BREATHS_IN_WINDOW,
-) -> np.ndarray:
-    """Фиксированные значения столбцов (детерминированный seed)."""
-    rng = np.random.default_rng(seed)
-    vals = base + np.sin(np.linspace(0.3, 3.0, n)) * noise + rng.normal(0, noise * 0.2, n)
-    return np.clip(vals, 5.0, 100.0).astype(float)
+def _empty_bars(n: int = BREATHS_IN_WINDOW) -> np.ndarray:
+    return np.zeros(n, dtype=float)
 
 
 # ── Separator helpers ─────────────────────────────────────────────────────────
@@ -106,7 +104,7 @@ class _BarChart(QWidget):
 
     def __init__(self, seed: int = 0, compact: bool = False, parent=None):
         super().__init__(parent)
-        self._data = _static_bars(seed=seed)
+        self._data = _empty_bars()
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setMinimumHeight(30 if compact else 46)
@@ -207,8 +205,14 @@ class _BarRow(QWidget):
         self.lbl_pct.setText(f"{data[-1]:.0f}%")
 
     def refresh(self, data: np.ndarray | None = None):
-        """Гистограммы статичны — не перерисовываем при тике таймера."""
-        pass
+        if data is None:
+            return
+        values = np.asarray(data, dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size > BREATHS_IN_WINDOW:
+            values = values[-BREATHS_IN_WINDOW:]
+        self.chart.set_data(values)
+        self.lbl_pct.setText("—" if values.size == 0 else f"{values[-1]:.1f}")
 
 
 class _MultiWave(QWidget):
@@ -228,11 +232,31 @@ class _MultiWave(QWidget):
         else:
             self._weights = list(weights)
         self._data: list[np.ndarray] = [np.zeros(DISPLAY_SAMPLES) for _ in channels]
+        self._markers: tuple[float, ...] = ()
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
 
     def set_data(self, data_list: list[np.ndarray]):
         self._data = list(data_list)
+        self.update()
+
+    def set_event_markers(self, events, time_values):
+        times = np.asarray(time_values, dtype=float)
+        if times.size == 1:
+            end = float(times[0]) + 0.5
+            self._markers = tuple(
+                1.0 for event in events if 0.0 <= float(event.position_seconds) <= end
+            )
+        elif times.size < 2 or times[-1] <= times[0]:
+            self._markers = ()
+        else:
+            start, end = float(times[0]), float(times[-1])
+            span = end - start
+            self._markers = tuple(
+                min(1.0, (float(event.position_seconds) - start) / span)
+                for event in events
+                if start <= float(event.position_seconds) <= end + 0.5
+            )
         self.update()
 
     def _channel_heights(self, tot_h: float) -> list[float]:
@@ -290,7 +314,11 @@ class _MultiWave(QWidget):
             data = self._data[ci] if ci < len(self._data) else np.zeros(2)
             n = len(data)
             if n >= 2:
-                lo, hi = float(data.min()), float(data.max())
+                finite = data[np.isfinite(data)]
+                if finite.size == 0:
+                    ch_top += ch_h
+                    continue
+                lo, hi = float(finite.min()), float(finite.max())
                 if hi - lo < 1e-9:
                     hi = lo + 1.0
 
@@ -298,18 +326,28 @@ class _MultiWave(QWidget):
                 p.setPen(QPen(QColor(C["border"]), 1, Qt.DotLine))
                 p.drawLine(ML, int(mid_y), ML + pw, int(mid_y))
 
-                xs, ys = [], []
                 pad = 3 if is_compact else 4
                 baseline = ch_top + ch_h - pad
-                for i in range(n):
-                    x = ML + (i / (n - 1)) * pw
-                    y = ch_top + pad + (1.0 - (data[i] - lo) / (hi - lo)) * (ch_h - 2 * pad)
-                    xs.append(x)
-                    ys.append(y)
-
-                draw_filled_waveform(p, xs, ys, QColor(color), baseline)
+                segment_x, segment_y = [], []
+                for i in range(n + 1):
+                    value = data[i] if i < n else np.nan
+                    if np.isfinite(value):
+                        segment_x.append(ML + (i / (n - 1)) * pw)
+                        segment_y.append(
+                            ch_top + pad + (1.0 - (value - lo) / (hi - lo)) * (ch_h - 2 * pad)
+                        )
+                    elif len(segment_x) >= 2:
+                        draw_filled_waveform(p, segment_x, segment_y, QColor(color), baseline)
+                        segment_x, segment_y = [], []
+                    else:
+                        segment_x, segment_y = [], []
 
             ch_top += ch_h
+
+        p.setPen(QPen(QColor(C["warn"]), 2, Qt.DashLine))
+        for position in self._markers:
+            marker_x = ML + max(0.0, min(1.0, position)) * pw
+            p.drawLine(int(marker_x), MT, int(marker_x), MT + int(tot_h))
 
 
 class _TrendTable(QWidget):
@@ -322,8 +360,17 @@ class _TrendTable(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(100, 50)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
-        rng = np.random.default_rng(42)
-        self._vals = rng.integers(40, 80, (self.N_ROWS, self.N_COLS)).tolist()
+        self._vals = [["—"] * self.N_COLS for _ in range(self.N_ROWS)]
+
+    def set_values(self, values):
+        rows = list(values)
+        self._vals = [
+            [f"{value:.1f}" if value is not None else "—" for value in row[:self.N_COLS]]
+            + ["—"] * max(0, self.N_COLS - len(row))
+            for row in rows[:self.N_ROWS]
+        ]
+        self._vals += [["—"] * self.N_COLS] * max(0, self.N_ROWS - len(self._vals))
+        self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -390,6 +437,11 @@ class _LungIcon(QWidget):
             p.setFont(f)
             p.drawText(ex + 4, top + lh + 12, side)
 
+    def set_fill(self, left: float, right: float):
+        self._l = max(0.0, min(1.0, left))
+        self._r = max(0.0, min(1.0, right))
+        self.update()
+
 
 # ════════════════════════════════════════════════════════════════════════════════
 # Shared layout helpers
@@ -431,7 +483,7 @@ def _npct_col() -> QWidget:
         lbl.setStyleSheet(
             f"color:{C['text_dim']};font-size:{_TREND_VALUE}px;background:transparent;"
         )
-        box = QLabel("55")
+        box = QLabel("—")
         box.setFixedSize(52, 28)
         box.setAlignment(Qt.AlignCenter)
         box.setStyleSheet(
@@ -521,8 +573,11 @@ class _RightPanel(QWidget):
             lay.addWidget(row, stretch=stretch)
             self.bar_rows.append(row)
 
-    def refresh(self):
-        pass
+    def refresh(self, data_list=None):
+        if data_list is None:
+            return
+        for row, data in zip(self.bar_rows, data_list):
+            row.refresh(np.asarray(data, dtype=float))
 
 
 # ── Panel width ratio: left waveform vs right bar charts ─────────────────────
@@ -540,9 +595,8 @@ def _size_bottom_btn(btn: QPushButton) -> None:
 class _GlobalTab(QWidget):
     """Tab 1: Global aeration trend."""
 
-    def __init__(self, sim: BreathingSimulator, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._sim = sim
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(4)
@@ -555,6 +609,7 @@ class _GlobalTab(QWidget):
 
     def refresh(self, waves: dict):
         self.left.wave.set_data([waves["global"]])
+        self.right.refresh([waves["global"]])
 
 
 class _RegionalPage(QWidget):
@@ -573,14 +628,14 @@ class _RegionalPage(QWidget):
 
     def refresh(self, wave_list: list[np.ndarray]):
         self.left.wave.set_data(wave_list)
+        self.right.refresh(wave_list)
 
 
 class _RegionalTab(QWidget):
     """Tab 2: Regional aeration trend — R / L toggle."""
 
-    def __init__(self, sim: BreathingSimulator, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._sim  = sim
         self._side = "R"
 
         outer = QVBoxLayout(self)
@@ -637,8 +692,8 @@ class _RegionalTab(QWidget):
 
     def refresh(self, waves: dict):
         rois = waves["rois"]
-        r_data = [rois[0], rois[0], rois[1], rois[2], rois[3]]   # R + ROI_1..4
-        l_data = [rois[4], rois[4], rois[5], rois[6], rois[7]]   # L + ROI_5..8
+        r_data = [waves.get("r", np.sum(rois[:4], axis=0)), *rois[:4]]
+        l_data = [waves.get("l", np.sum(rois[4:], axis=0)), *rois[4:]]
         self.page_r.refresh(r_data)
         self.page_l.refresh(l_data)
 
@@ -650,9 +705,8 @@ class _RegionalTab(QWidget):
 class _AllTrendsTab(QWidget):
     """Tab 3: Global + Regional combined long-term view."""
 
-    def __init__(self, sim: BreathingSimulator, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._sim = sim
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -677,7 +731,7 @@ class _AllTrendsTab(QWidget):
         icons_lay.setSpacing(6)
         icons_lay.setAlignment(Qt.AlignVCenter)
         self.lung_icons = []
-        for lf, rf in [(0.30, 0.35), (0.55, 0.60), (0.75, 0.80)]:
+        for lf, rf in [(0.0, 0.0)] * 3:
             icon = _LungIcon(lf, rf)
             icons_lay.addWidget(icon, alignment=Qt.AlignVCenter)
             self.lung_icons.append(icon)
@@ -759,7 +813,7 @@ class _AllTrendsTab(QWidget):
             l2.setStyleSheet(
                 f"color:{C['text_dim']};font-size:{_TREND_VALUE}px;background:transparent;"
             )
-            b2 = QLabel("55")
+            b2 = QLabel("—")
             b2.setFixedSize(48, 26)
             b2.setAlignment(Qt.AlignCenter)
             b2.setStyleSheet(
@@ -774,6 +828,18 @@ class _AllTrendsTab(QWidget):
 
     def refresh(self, waves: dict):
         self.long_wave.set_data([waves["global"]])
+        self.main_bar.refresh(np.asarray(waves["global"], dtype=float))
+        right = np.asarray(waves.get("r", []), dtype=float)
+        left = np.asarray(waves.get("l", []), dtype=float)
+        valid = np.flatnonzero(np.isfinite(right) & np.isfinite(left))
+        if valid.size:
+            index = int(valid[-1])
+            total = max(abs(float(right[index])) + abs(float(left[index])), 1e-9)
+            for icon in self.lung_icons:
+                icon.set_fill(
+                    abs(float(left[index])) / total,
+                    abs(float(right[index])) / total,
+                )
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -895,11 +961,27 @@ class _BottomBar(QWidget):
 # ════════════════════════════════════════════════════════════════════════════════
 
 class TrendsScreen(QWidget):
-    """Trends screen with three tabs and live mock data refresh."""
+    """Trends screen with three tabs and injected monitoring data."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        monitoring: MonitoringData,
+        parent=None,
+        *,
+        marker_service: EventMarkerService | None = None,
+        trend_service: TrendService | None = None,
+        study_repository=None,
+        event_repository=None,
+        lifecycle=None,
+    ):
         super().__init__(parent)
-        self._sim = BreathingSimulator()
+        self._monitoring = monitoring
+        self._marker_service = marker_service
+        self._trend_service = trend_service
+        self._study_repository = study_repository
+        self._event_repository = event_repository
+        self._lifecycle = lifecycle
+        self._study_ids: list[UUID] = []
         self._setup_ui()
 
         self._timer = QTimer(self)
@@ -921,10 +1003,31 @@ class TrendsScreen(QWidget):
         rule.setStyleSheet(f"background:{_AMBER};border:none;")
         outer.addWidget(rule)
 
+        selector = QWidget()
+        selector.setFixedHeight(42)
+        selector_lay = QHBoxLayout(selector)
+        selector_lay.setContentsMargins(8, 3, 8, 3)
+        self.study_combo = QComboBox()
+        self.study_combo.currentIndexChanged.connect(lambda _index: self._refresh())
+        selector_lay.addWidget(self.study_combo, stretch=2)
+        self.range_combo = QComboBox()
+        for label, seconds in (("5 мин", 300), ("15 мин", 900), ("30 мин", 1800),
+                               ("1 ч", 3600), ("6 ч", 21600), ("24 ч", 86400)):
+            self.range_combo.addItem(label, seconds)
+        self.range_combo.currentIndexChanged.connect(lambda _index: self._refresh())
+        selector_lay.addWidget(self.range_combo)
+        self.time_scroll = QSlider(Qt.Horizontal)
+        self.time_scroll.setRange(0, 1000)
+        self.time_scroll.setValue(1000)
+        self.time_scroll.valueChanged.connect(lambda _value: self._refresh())
+        selector_lay.addWidget(self.time_scroll, stretch=3)
+        outer.addWidget(selector)
+        self._sync_studies()
+
         self.stack = QStackedWidget()
-        self.tab_global   = _GlobalTab(self._sim)
-        self.tab_regional = _RegionalTab(self._sim)
-        self.tab_all      = _AllTrendsTab(self._sim)
+        self.tab_global   = _GlobalTab()
+        self.tab_regional = _RegionalTab()
+        self.tab_all      = _AllTrendsTab()
         self.stack.addWidget(self.tab_global)
         self.stack.addWidget(self.tab_regional)
         self.stack.addWidget(self.tab_all)
@@ -937,8 +1040,7 @@ class TrendsScreen(QWidget):
         i18n.language_changed.connect(self.retranslate)
 
     def _refresh(self):
-        self._sim.step()
-        waves = self._sim.get_waveforms()
+        waves, events = self._stored_view()
         idx = self.stack.currentIndex()
         if idx == 0:
             self.tab_global.refresh(waves)
@@ -946,9 +1048,109 @@ class TrendsScreen(QWidget):
             self.tab_regional.refresh(waves)
         else:
             self.tab_all.refresh(waves)
+        for wave in (
+            self.tab_global.left.wave,
+            self.tab_regional.page_r.left.wave,
+            self.tab_regional.page_l.left.wave,
+            self.tab_all.long_wave,
+        ):
+            wave.set_event_markers(events, waves["time"])
+
+    def _sync_studies(self):
+        if self._study_repository is None:
+            return
+        selected = self.study_combo.currentData()
+        studies = tuple(self._study_repository.list_all())
+        ids = [study.id for study in studies]
+        if ids == self._study_ids:
+            return
+        self._study_ids = ids
+        self.study_combo.blockSignals(True)
+        self.study_combo.clear()
+        for study in studies:
+            self.study_combo.addItem(
+                f"{study.created_at_utc.astimezone().strftime('%d.%m.%Y %H:%M')} · "
+                f"{study_status_text(study.status)}",
+                str(study.id),
+            )
+        target = selected
+        current = self._lifecycle.current_study if self._lifecycle is not None else None
+        if current is not None and current.status in {StudyStatus.RUNNING, StudyStatus.PAUSED}:
+            target = str(current.id)
+        elif target is None and current is not None:
+            target = str(current.id)
+        index = self.study_combo.findData(target)
+        self.study_combo.setCurrentIndex(max(0, index))
+        self.study_combo.blockSignals(False)
+
+    def _stored_view(self):
+        self._sync_studies()
+        empty = {
+            "time": np.asarray([], dtype=float), "global": np.asarray([], dtype=float),
+            "r": np.asarray([], dtype=float), "l": np.asarray([], dtype=float),
+            "rois": [np.asarray([], dtype=float) for _ in range(8)],
+        }
+        value = self.study_combo.currentData()
+        if self._trend_service is None or value is None:
+            return empty, ()
+        study_id = UUID(value)
+        bounds = self._trend_service.bounds(study_id)
+        if bounds is None:
+            return empty, ()
+        first, last = bounds
+        window = int(self.range_combo.currentData() or 300)
+        total = max(0.0, (last - first).total_seconds() - window)
+        end = last if total <= 0 else first + timedelta(
+            seconds=window + total * self.time_scroll.value() / 1000.0
+        )
+        start = end - timedelta(seconds=window)
+        persisted = self._trend_service.read(study_id, start, end).points
+        points = []
+        for point in persisted:
+            if points and point.position_seconds - points[-1].position_seconds > 22.5:
+                points.append(None)
+            points.append(point)
+        def values(name):
+            return np.asarray([
+                (
+                    getattr(point, name)
+                    if point is not None and point.quality is DataQuality.VALID
+                    else np.nan
+                )
+                for point in points
+            ], dtype=float)
+        waves = {
+            "time": np.asarray([
+                point.position_seconds if point is not None else (
+                    points[index - 1].position_seconds + 15.0
+                )
+                for index, point in enumerate(points)
+            ], dtype=float),
+            "global": values("global_value"),
+            "r": values("right_value"),
+            "l": values("left_value"),
+            "rois": [np.asarray([
+                (
+                    point.roi_values[index]
+                    if point is not None and point.quality is DataQuality.VALID
+                    else np.nan
+                )
+                for point in points
+            ], dtype=float) for index in range(8)],
+        }
+        events = ()
+        if self._event_repository is not None:
+            events = tuple(
+                event for event in self._event_repository.search(
+                    study_id, start_utc=start, end_utc=end + timedelta(seconds=1)
+                ) if event.category is EventCategory.MARKER
+            )
+        return waves, events
 
     def retranslate(self):
         self.tab_bar.retranslate()
         self.bottom.retranslate()
         if hasattr(self.tab_regional, "retranslate"):
             self.tab_regional.retranslate()
+        self._study_ids = []
+        self._sync_studies()

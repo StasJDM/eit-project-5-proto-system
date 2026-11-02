@@ -5,10 +5,12 @@
   Вкладка 3 — Аэрация ГЛОБАЛЬНАЯ            (визуализация лёгких + суммарная кривая)
 """
 
+from datetime import timedelta
+
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QFrame, QSizePolicy, QGridLayout, QStackedWidget, QScrollArea,
+    QFrame, QSizePolicy, QGridLayout, QStackedWidget, QScrollArea, QComboBox,
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QCursor
@@ -18,16 +20,22 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — регистрирует проекцию '3d'
 
-from ..mock_data import BreathingSimulator, breath_waveform, RR_BPM, DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, FS
+from ..application import (
+    BreathingClass, BreathingClassificationService, EventMarkerService, MonitoringData,
+)
+from ..domain import utc_now
+from ..application.monitoring import DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, FS
+from ..application.signal_shapes import breath_waveform
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounter, _VALUE_FONT
 from ..widgets.lung_viz import LungVizWidget
 from ..widgets.waveform_panel import WaveformPanel, RegionalWaveformPanel
 from ..styles import C, WAVE_COLORS, configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, TAB_BAR_FONT, TAB_BAR_SUB_FONT, FONT_BASE, FONT_SMALL, FONT_LABEL, FONT_VALUE, FONT_BTN_START
 from ..i18n import t, i18n
+from ..ui_text import quality_reason_text, quality_text
 
-SAMPLE_MS = 40
 PAINT_MS  = 100
+RR_BPM = 15
 
 _BT_KEYS = [
     "analysis_bt_eupnea",
@@ -128,7 +136,7 @@ class _PBox(QFrame):
 
         lay.addStretch()
 
-        self._v = QLabel("0.0")
+        self._v = QLabel("—")
         self._v.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self._v.setMinimumWidth(56)
         self._v.setStyleSheet(
@@ -137,7 +145,10 @@ class _PBox(QFrame):
         lay.addWidget(self._v)
 
     def set_value(self, v):
-        self._v.setText(f"{v:.1f}" if isinstance(v, float) else str(v))
+        if v is None:
+            self._v.setText("—")
+        else:
+            self._v.setText(f"{v:.1f}" if isinstance(v, float) else str(v))
 
 
 def _hsep() -> QFrame:
@@ -147,11 +158,19 @@ def _hsep() -> QFrame:
     return f
 
 
+class _EventMarkerButton(QPushButton):
+    def __init__(self):
+        super().__init__()
+        configure_event_marker_btn(self)
+        i18n.language_changed.connect(self.retranslate)
+        self.retranslate()
+
+    def retranslate(self, *_args):
+        self.setText(t("wave_event_marker"))
+
+
 def _make_event_btn() -> QPushButton:
-    b = QPushButton(t("wave_event_marker"))
-    configure_event_marker_btn(b)
-    i18n.language_changed.connect(lambda _: b.setText(t("wave_event_marker")))
-    return b
+    return _EventMarkerButton()
 
 
 def _start_btn_text(running: bool) -> str:
@@ -208,6 +227,7 @@ class _BottomBar(QWidget):
         lay.addWidget(self.btn_event)
 
         i18n.language_changed.connect(self.retranslate)
+        self.retranslate()
 
     def sync_start(self, running: bool):
         self.btn_start.setText(_start_btn_text(running))
@@ -411,6 +431,8 @@ def _build_avg_figure() -> Figure:
 class _GlobalLeftPanel(QWidget):
     """Левая панель вкладки «Глобальная аэрация»: визуализация + параметры + кнопки."""
 
+    analysis_selection_changed = Signal(float, object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(380)
@@ -420,6 +442,37 @@ class _GlobalLeftPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 8)
         lay.setSpacing(6)
+
+        selection = QWidget()
+        selection.setStyleSheet("background:transparent;")
+        sl = QGridLayout(selection)
+        sl.setContentsMargins(2, 0, 2, 0)
+        sl.setHorizontalSpacing(6)
+        sl.setVerticalSpacing(3)
+        self._window_label = QLabel()
+        self._cycle_label = QLabel()
+        self._window_combo = QComboBox()
+        self._cycle_combo = QComboBox()
+        for seconds in (5.0, 15.0, 30.0, 60.0):
+            self._window_combo.addItem("", seconds)
+        for count in (None, 1, 3, 5):
+            self._cycle_combo.addItem("", count)
+        self._window_combo.setCurrentIndex(2)
+        for widget in (
+            self._window_label, self._cycle_label,
+            self._window_combo, self._cycle_combo,
+        ):
+            widget.setStyleSheet(
+                f"color:{C['text']};background:{C['bg_card']};"
+                f"font-size:{FONT_SMALL}px;"
+            )
+        sl.addWidget(self._window_label, 0, 0)
+        sl.addWidget(self._window_combo, 0, 1)
+        sl.addWidget(self._cycle_label, 1, 0)
+        sl.addWidget(self._cycle_combo, 1, 1)
+        lay.addWidget(selection)
+        self._window_combo.currentIndexChanged.connect(self._emit_selection)
+        self._cycle_combo.currentIndexChanged.connect(self._emit_selection)
 
         self.lung_viz = LungVizWidget()
         self.lung_viz.setMinimumHeight(220)
@@ -434,7 +487,7 @@ class _GlobalLeftPanel(QWidget):
         self.bx_t   = _PBox("T, %")
         self.bx_r   = _PBox("R, %")
         self.bx_l   = _PBox("L, %")
-        self.bx_lr  = _PBox("L/R")
+        self.bx_lr  = _PBox("R/L")
         self.bx_vd  = _PBox("V/D")
         self.bx_rr  = _PBox("ЧД")
         gl.addWidget(self.bx_t,  0, 0)
@@ -444,6 +497,13 @@ class _GlobalLeftPanel(QWidget):
         gl.addWidget(self.bx_vd, 1, 1)
         gl.addWidget(self.bx_rr, 2, 1)
         lay.addWidget(grid)
+
+        self._analysis_status = QLabel()
+        self._analysis_status.setWordWrap(True)
+        self._analysis_status.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;background:transparent;"
+        )
+        lay.addWidget(self._analysis_status)
 
         lay.addWidget(_hsep())
         lay.addStretch()
@@ -465,6 +525,7 @@ class _GlobalLeftPanel(QWidget):
         lay.addWidget(counters)
 
         i18n.language_changed.connect(self.retranslate)
+        self.retranslate()
 
     def sync_start(self, running: bool):
         self.btn_start.setText(_start_btn_text(running))
@@ -480,10 +541,57 @@ class _GlobalLeftPanel(QWidget):
         self.bx_l.set_value(snap.l_pct)
         self.bx_lr.set_value(snap.lr_ratio)
         self.bx_vd.set_value(snap.vd_ratio)
-        self.bx_rr.set_value(round(snap.rr, 0))
-        self.lung_viz.update_state(snap.phase, snap.roi_pct)
+        self.bx_rr.set_value(round(snap.rr, 0) if snap.rr is not None else None)
+        self.lung_viz.update_state(
+            snap.phase,
+            snap.roi_pct,
+            getattr(snap, "reconstruction_map", None),
+            getattr(snap, "absolute_conductivity_map", None),
+        )
+        snap_quality = getattr(snap, "quality", "unavailable")
+        quality = quality_text(snap_quality)
+        cycles = getattr(snap, "complete_cycle_count", 0)
+        selected = getattr(snap, "selected_cycle_count", None)
+        cycle_text = f"{cycles}" if selected is None else f"{cycles}/{selected}"
+        self._analysis_status.setText(
+            f"{t('analysis_quality')}: {quality} · "
+            f"{t('analysis_cycles_found')}: {cycle_text}\n"
+            f"{getattr(snap, 'algorithm_version', '—')} · "
+            f"{getattr(snap, 'analyzed_sample_count', 0)} "
+            f"{t('analysis_samples')}"
+        )
+        params = getattr(snap, "algorithm_parameters", None)
+        if params is not None:
+            self._analysis_status.setToolTip(
+                f"{t('analysis_param_sample_rate')}: "
+                f"{params.sample_rate_hz:g} {t('analysis_unit_hz')}; "
+                f"{t('analysis_param_smoothing')}: {params.smoothing_samples}; "
+                f"{t('analysis_param_min_cycles')}: {params.minimum_complete_cycles}; "
+                f"{t('analysis_param_rr_range')}: "
+                f"{params.minimum_rr_bpm:g}–{params.maximum_rr_bpm:g} {t('wave_rr_unit')}; "
+                f"{t('ui_reason_label')}: "
+                f"{quality_reason_text(getattr(snap, 'quality_reason', None))}"
+            )
+
+    @property
+    def analysis_selection(self) -> tuple[float, int | None]:
+        return (
+            float(self._window_combo.currentData()),
+            self._cycle_combo.currentData(),
+        )
+
+    def _emit_selection(self):
+        window, cycles = self.analysis_selection
+        self.analysis_selection_changed.emit(window, cycles)
 
     def retranslate(self):
+        self._window_label.setText(t("analysis_interval"))
+        self._cycle_label.setText(t("analysis_cycles"))
+        for index, seconds in enumerate((5, 15, 30, 60)):
+            self._window_combo.setItemText(index, f"{seconds} {t('analysis_seconds_short')}")
+        self._cycle_combo.setItemText(0, t("analysis_all_cycles"))
+        for index, count in enumerate((1, 3, 5), start=1):
+            self._cycle_combo.setItemText(index, str(count))
         self.cnt_eit.retranslate()
         self.cnt_es.retranslate()
 
@@ -504,6 +612,11 @@ class GlobalTab(QWidget):
         lay.addWidget(self._waves, stretch=1)
 
         self.btn_start = self._left.btn_start
+        self.btn_event = self._waves.btn_event
+
+    @property
+    def analysis_selection(self) -> tuple[float, int | None]:
+        return self._left.analysis_selection
 
     def sync_start(self, running: bool):
         self._left.sync_start(running)
@@ -558,7 +671,7 @@ class RegionalTab(QWidget):
         self.bx_t  = _PBox("T, %", w=128)
         self.bx_r  = _PBox("R, %", w=128)
         self.bx_l  = _PBox("L, %", w=128)
-        self.bx_lr = _PBox("L/R",  w=128)
+        self.bx_lr = _PBox("R/L",  w=128)
         self.bx_vd = _PBox("V/D",  w=128)
         pgl.addWidget(self.bx_t,  0, 0)
         pgl.addWidget(self.bx_r,  0, 1)
@@ -578,6 +691,7 @@ class RegionalTab(QWidget):
         root.addWidget(self._bar)
 
         self.btn_start = self._bar.btn_start
+        self.btn_event = self._bar.btn_event
 
     def sync_start(self, running: bool):
         self._bar.sync_start(running)
@@ -591,7 +705,12 @@ class RegionalTab(QWidget):
         self.bx_l.set_value(snap.l_pct)
         self.bx_lr.set_value(snap.lr_ratio)
         self.bx_vd.set_value(snap.vd_ratio)
-        self.lung_viz.update_state(snap.phase, snap.roi_pct)
+        self.lung_viz.update_state(
+            snap.phase,
+            snap.roi_pct,
+            getattr(snap, "reconstruction_map", None),
+            getattr(snap, "absolute_conductivity_map", None),
+        )
         self._waves.update_all(
             waves, snap.roi_pct, snap.r_pct, snap.l_pct,
             trends={
@@ -644,6 +763,8 @@ class _BreathingTypeBtn(QLabel):
 class _BreathingTypePanel(QWidget):
     """Правая колонка: список возможных типов дыхания."""
 
+    manual_selected = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(280)
@@ -694,6 +815,8 @@ class _BreathingTypePanel(QWidget):
             self._selected = idx
         for i, btn in enumerate(self._btns):
             btn.set_active(i == self._selected)
+        if self._selected is not None:
+            self.manual_selected.emit(self._selected)
 
     def retranslate(self):
         self._title.setText(t("analysis_possible_types"))
@@ -704,8 +827,10 @@ class _BreathingTypePanel(QWidget):
 class PathologyTab(QWidget):
     """Вкладка «Тип патологического дыхания»."""
 
-    def __init__(self, parent=None):
+    def __init__(self, classification_service=None, parent=None):
         super().__init__(parent)
+        self._classification_service = classification_service
+        self._last_result = None
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -759,11 +884,14 @@ class PathologyTab(QWidget):
         middle_lay.addWidget(self._sub_stack, stretch=1)
 
         self._bt_panel = _BreathingTypePanel()
+        self._bt_panel.manual_selected.connect(self._set_manual_assessment)
         middle_lay.addWidget(self._bt_panel)
         root.addWidget(middle, stretch=1)
 
         # ── Строка «Текущий тип дыхания» ──────────────────────────────────────
-        self._type_lbl = QLabel(f"{t('analysis_current_type')}: {t('analysis_bt_eupnea')}")
+        self._type_lbl = QLabel(
+            f"{t('analysis_current_type')}: {t('analysis_bt_undetermined')}"
+        )
         self._type_lbl.setAlignment(Qt.AlignCenter)
         self._type_lbl.setFixedHeight(26)
         self._type_lbl.setStyleSheet(
@@ -771,12 +899,20 @@ class PathologyTab(QWidget):
             f"background:{C['bg_panel']};border-top:1px solid {C['border']};"
         )
         root.addWidget(self._type_lbl)
+        self._manual_lbl = QLabel(f"{t('analysis_manual_type')}: —")
+        self._manual_lbl.setAlignment(Qt.AlignCenter)
+        self._manual_lbl.setFixedHeight(24)
+        self._manual_lbl.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;background:{C['bg_panel']};"
+        )
+        root.addWidget(self._manual_lbl)
 
         # ── Нижняя панель ─────────────────────────────────────────────────────
         self._bar = _BottomBar()
         root.addWidget(self._bar)
 
         self.btn_start = self._bar.btn_start
+        self.btn_event = self._bar.btn_event
         self._switch_sub(0)
         i18n.language_changed.connect(self.retranslate)
 
@@ -796,18 +932,83 @@ class PathologyTab(QWidget):
         self._bar.set_counters(eit, es)
 
     def update_data(self, snap, waves: dict):
-        if snap.rr < 12:
-            detected = t("analysis_bt_bradypnea")
-        elif snap.rr > 20:
-            detected = t("analysis_bt_tachypnea")
+        service = self._classification_service
+        if service is None:
+            detected = t("analysis_bt_undetermined")
+            detail = ""
         else:
-            detected = t("analysis_bt_eupnea")
-        self._type_lbl.setText(f"{t('analysis_current_type')}: {detected}")
+            now = utc_now()
+            values = np.asarray(waves.get("global", []), dtype=float)
+            duration = len(values) / FS
+            result = service.classify(values, FS, now - timedelta(seconds=duration), now)
+            self._last_result = result
+            keys = {
+                BreathingClass.EUPNEA: "analysis_bt_eupnea",
+                BreathingClass.TACHYPNEA: "analysis_bt_tachypnea",
+                BreathingClass.BRADYPNEA: "analysis_bt_bradypnea",
+                BreathingClass.APNEA: "analysis_bt_apnea",
+                BreathingClass.PERIODIC: "analysis_bt_periodic",
+                BreathingClass.RESTRICTIVE: "analysis_bt_restrictive",
+                BreathingClass.RETRACTIVE: "analysis_bt_retraction",
+                BreathingClass.GASPING: "analysis_bt_gasping",
+                BreathingClass.DYSPNEA: "analysis_bt_dyspnea",
+                BreathingClass.CENTRAL_APNEA: "analysis_bt_apnea_central",
+                BreathingClass.OBSTRUCTIVE_APNEA: "analysis_bt_apnea_obstructive",
+                BreathingClass.MIXED_APNEA: "analysis_bt_apnea_mixed",
+                BreathingClass.REFLEX_APNEA: "analysis_bt_apnea_reflex",
+                BreathingClass.UNDETERMINED: "analysis_bt_undetermined",
+            }
+            detected = t(keys[result.breathing_class])
+            detail = f" · {result.confidence * 100:.0f}% · {result.algorithm_version}"
+        self._type_lbl.setText(f"{t('analysis_current_type')}: {detected}{detail}")
+
+    def _set_manual_assessment(self, index: int):
+        if self._classification_service is None:
+            return
+        classes = (
+            BreathingClass.EUPNEA, BreathingClass.PERIODIC,
+            BreathingClass.TACHYPNEA, BreathingClass.RETRACTIVE,
+            BreathingClass.GASPING, BreathingClass.BRADYPNEA,
+            BreathingClass.DYSPNEA, BreathingClass.CENTRAL_APNEA,
+            BreathingClass.OBSTRUCTIVE_APNEA, BreathingClass.MIXED_APNEA,
+            BreathingClass.REFLEX_APNEA,
+        )
+        assessment = self._classification_service.set_manual_assessment(
+            classes[index], "local-operator"
+        )
+        self._manual_lbl.setText(
+            f"{t('analysis_manual_type')}: {t(_BT_KEYS[index])} · {assessment.author}"
+        )
 
     def retranslate(self):
         self._btn_pca.setText(t("analysis_sub_pca"))
         self._btn_avg.setText(t("analysis_sub_avg"))
-        self._type_lbl.setText(f"{t('analysis_current_type')}: {t('analysis_bt_eupnea')}")
+        detected = (
+            t("analysis_bt_undetermined") if self._last_result is None
+            else t({
+                BreathingClass.EUPNEA: "analysis_bt_eupnea",
+                BreathingClass.TACHYPNEA: "analysis_bt_tachypnea",
+                BreathingClass.BRADYPNEA: "analysis_bt_bradypnea",
+                BreathingClass.APNEA: "analysis_bt_apnea",
+                BreathingClass.PERIODIC: "analysis_bt_periodic",
+                BreathingClass.RESTRICTIVE: "analysis_bt_restrictive",
+                BreathingClass.RETRACTIVE: "analysis_bt_retraction",
+                BreathingClass.GASPING: "analysis_bt_gasping",
+                BreathingClass.DYSPNEA: "analysis_bt_dyspnea",
+                BreathingClass.CENTRAL_APNEA: "analysis_bt_apnea_central",
+                BreathingClass.OBSTRUCTIVE_APNEA: "analysis_bt_apnea_obstructive",
+                BreathingClass.MIXED_APNEA: "analysis_bt_apnea_mixed",
+                BreathingClass.REFLEX_APNEA: "analysis_bt_apnea_reflex",
+                BreathingClass.UNDETERMINED: "analysis_bt_undetermined",
+            }[self._last_result.breathing_class])
+        )
+        self._type_lbl.setText(f"{t('analysis_current_type')}: {detected}")
+        assessment = (
+            self._classification_service.manual_assessment
+            if self._classification_service is not None else None
+        )
+        if assessment is None:
+            self._manual_lbl.setText(f"{t('analysis_manual_type')}: —")
         self._bt_panel.retranslate()
 
 
@@ -833,14 +1034,20 @@ _TAB_IDLE_STYLE = f"""
 
 
 class AnalysisScreen(QWidget):
-    """Экран АНАЛИЗ с тремя вкладками и живыми мок-данными."""
+    """Экран АНАЛИЗ с тремя вкладками и внедрённым источником данных."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        monitoring: MonitoringData,
+        parent=None,
+        *,
+        marker_service: EventMarkerService | None = None,
+        classification_service: BreathingClassificationService | None = None,
+    ):
         super().__init__(parent)
 
-        self._sim       = BreathingSimulator()
-        self._is_running = False
-
+        self._monitoring = monitoring
+        self._marker_service = marker_service
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -873,25 +1080,20 @@ class AnalysisScreen(QWidget):
         self._stack = QStackedWidget()
         root.addWidget(self._stack, stretch=1)
 
-        self._path_tab   = PathologyTab()
+        self._path_tab   = PathologyTab(classification_service)
         self._global_tab = GlobalTab()
         self._reg_tab    = RegionalTab()
 
         self._stack.addWidget(self._path_tab)
         self._stack.addWidget(self._reg_tab)
         self._stack.addWidget(self._global_tab)
-
-        # Подключение кнопок Старт
-        for tab in self._all_tabs():
-            tab.btn_start.clicked.connect(self._toggle_start)
+        self._global_tab._left.analysis_selection_changed.connect(
+            self._configure_global_analysis
+        )
 
         self._switch_tab(2)  # «Глобальная» по умолчанию
 
         # ── Таймеры ───────────────────────────────────────────────────────────
-        self._sample_timer = QTimer(self)
-        self._sample_timer.timeout.connect(self._on_sample)
-        self._sample_timer.start(SAMPLE_MS)
-
         self._paint_timer = QTimer(self)
         self._paint_timer.timeout.connect(self._on_paint)
         self._paint_timer.start(PAINT_MS)
@@ -916,20 +1118,46 @@ class AnalysisScreen(QWidget):
         ):
             btn.setStyleSheet(style)
 
-    def _toggle_start(self):
-        self._is_running = not self._is_running
+    def sync_start(self, running: bool):
         for tab in self._all_tabs():
-            tab.sync_start(self._is_running)
-
-    def _on_sample(self):
-        self._sim.step()
+            tab.sync_start(running)
 
     def _on_paint(self):
-        snap  = self._sim.snapshot
-        waves = self._sim.get_waveforms()
         current = self._stack.currentWidget()
+        window = (
+            current.analysis_selection[0]
+            if current is self._global_tab else DISPLAY_WINDOW_SEC
+        )
+        if hasattr(self._monitoring, "read_view"):
+            view = self._monitoring.read_view(window)
+            snap, waves = view.snapshot, view.waveforms
+        else:
+            snap = self._monitoring.snapshot
+            waves = self._monitoring.get_waveforms(window)
         if hasattr(current, "update_data"):
             current.update_data(snap, waves)
+        events = (
+            self._marker_service.list_for_current_study()
+            if self._marker_service is not None else ()
+        )
+        if current is self._global_tab:
+            current._waves.set_event_markers(events, waves["time"])
+        elif current is self._reg_tab:
+            current._waves.set_event_markers(events, waves["time"])
+
+    def _configure_global_analysis(
+        self, window_seconds: float, cycle_count: int | None
+    ) -> None:
+        configure = getattr(self._monitoring, "configure_aeration_analysis", None)
+        if configure is not None:
+            configure(window_seconds=window_seconds, cycle_count=cycle_count)
+
+    @property
+    def event_buttons(self):
+        return tuple(
+            tab.btn_event for tab in self._all_tabs()
+            if getattr(tab, "btn_event", None) is not None
+        )
 
     def _on_timers_updated(self, eit_str: str, es_str: str):
         for tab in self._all_tabs():

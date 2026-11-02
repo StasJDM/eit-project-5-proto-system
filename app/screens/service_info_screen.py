@@ -7,56 +7,50 @@
     - Навигация: переход в выбранное окно (обрабатывается NavPanel)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QComboBox, QDialog, QTextEdit, QLineEdit,
-    QSizePolicy,
+    QFrame, QScrollArea, QComboBox, QDialog, QTextEdit, QLineEdit, QDateTimeEdit,
+    QSizePolicy, QMessageBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 
+from ..application import (
+    AdverseEventError, AdverseEventService, EventMarkerError, EventMarkerService,
+)
+from ..domain import Event, EventCategory
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
 from ..i18n import t, i18n
+from .event_marker_dialog import EventMarkerDialog, _format_position
 
 # ── Event type keys (i18n) ────────────────────────────────────────────────────
 
 _EVENT_TYPES = [
+    "marker_type_cough",
+    "marker_type_procedure",
+    "marker_type_position",
+    "marker_type_suction",
+    "marker_type_note",
     "svc_type_tech_error",
     "svc_type_adverse_event",
     "svc_type_adverse_phenom",
     "svc_type_operator_note",
 ]
-
-# ── Mock pre-populated events ─────────────────────────────────────────────────
-
-def _mock_events():
-    now = datetime.now()
-    return [
-        {
-            "dt":   now.replace(hour=8,  minute=0,  second=12).strftime("%d.%m.%Y  %H:%M:%S"),
-            "type": "svc_type_operator_note",
-            "desc": "Начало сеанса мониторинга. Пациент подключён.",
-        },
-        {
-            "dt":   now.replace(hour=8,  minute=14, second=55).strftime("%d.%m.%Y  %H:%M:%S"),
-            "type": "svc_type_tech_error",
-            "desc": "Кратковременная потеря контакта электрода №7. Автоматически восстановлено.",
-        },
-        {
-            "dt":   now.replace(hour=8,  minute=37, second=3).strftime("%d.%m.%Y  %H:%M:%S"),
-            "type": "svc_type_adverse_event",
-            "desc": "Изменение паттерна дыхания: переход от эупноэ к тахипноэ. Уведомлён врач.",
-        },
-    ]
-
+_ADVERSE_TYPE_KEYS = [
+    "svc_type_tech_error", "svc_type_adverse_event",
+    "svc_type_adverse_phenom", "svc_type_operator_note",
+]
 
 # ── Add-event dialog ──────────────────────────────────────────────────────────
 
 class AddEventDialog(QDialog):
     """Модальный диалог ввода сведений о событии через текстовые поля."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self, parent=None, *, default_author: str = "local-operator", original=None,
+        event_types=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(t("svc_dlg_title"))
         self.setFixedSize(520, 380)
@@ -131,7 +125,7 @@ class AddEventDialog(QDialog):
         lbl_type = QLabel(t("svc_dlg_type"))
         lbl_type.setFixedWidth(140)
         self._combo_type = QComboBox()
-        for key in _EVENT_TYPES:
+        for key in event_types or _EVENT_TYPES:
             self._combo_type.addItem(t(key), key)
         row_type.addWidget(lbl_type)
         row_type.addWidget(self._combo_type)
@@ -144,6 +138,28 @@ class AddEventDialog(QDialog):
         self._edit_desc.setPlaceholderText(t("svc_dlg_desc_hint"))
         self._edit_desc.setFixedHeight(90)
         lay.addWidget(self._edit_desc)
+
+        row_author = QHBoxLayout()
+        lbl_author = QLabel(t("marker_author"))
+        lbl_author.setFixedWidth(140)
+        self._edit_author = QLineEdit(default_author)
+        row_author.addWidget(lbl_author)
+        row_author.addWidget(self._edit_author)
+        lay.addLayout(row_author)
+
+        if original is not None:
+            self._edit_dt.setText(original.occurred_at_utc.astimezone().strftime("%d.%m.%Y  %H:%M:%S"))
+            self._edit_dt.setReadOnly(True)
+            self._edit_desc.setPlainText(original.text)
+            original_keys = {
+                "technical_error": "svc_type_tech_error",
+                "adverse_event": "svc_type_adverse_event",
+                "adverse_phenomenon": "svc_type_adverse_phenom",
+                "operator_note": "svc_type_operator_note",
+            }
+            index = self._combo_type.findData(original_keys.get(original.event_type))
+            if index >= 0:
+                self._combo_type.setCurrentIndex(index)
 
         lay.addStretch()
 
@@ -192,7 +208,7 @@ class AddEventDialog(QDialog):
 
     def _save(self):
         desc = self._edit_desc.toPlainText().strip()
-        if not desc:
+        if not desc or not self._edit_author.text().strip():
             self._edit_desc.setStyleSheet(
                 self._edit_desc.styleSheet() +
                 f"border-color:{C['alarm']};"
@@ -205,6 +221,7 @@ class AddEventDialog(QDialog):
             "dt":   self._edit_dt.text().strip(),
             "type": self._combo_type.currentData(),
             "desc": self._edit_desc.toPlainText().strip(),
+            "author": self._edit_author.text().strip(),
         }
 
 
@@ -219,6 +236,8 @@ _SVC_LABEL_FONT = round(FONT_BASE * 1.2)   # +20 % для подзаголовк
 
 class _EventRow(QFrame):
     """One row in the event log."""
+
+    correction_requested = Signal(object)
 
     def __init__(self, num: int, event: dict, even: bool, parent=None):
         super().__init__(parent)
@@ -248,10 +267,19 @@ class _EventRow(QFrame):
         lay.addWidget(self._vsep())
 
         desc_lbl = self._cell(event["desc"])
+        desc_lbl.setToolTip(event["desc"])
         desc_lbl.setWordWrap(True)
         desc_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         desc_lbl.setContentsMargins(10, 4, 10, 4)
         lay.addWidget(desc_lbl, stretch=1)
+        source_event = event.get("event")
+        if source_event is not None:
+            correction = QPushButton(t("marker_correction"))
+            correction.setFixedWidth(110)
+            correction.clicked.connect(
+                lambda _checked=False, item=source_event: self.correction_requested.emit(item)
+            )
+            lay.addWidget(correction)
 
     # ── Badge colours by event type ──────────────────────────────────────────
 
@@ -260,6 +288,11 @@ class _EventRow(QFrame):
         "svc_type_adverse_event":  (C['warn'],   "#1a1205"),
         "svc_type_adverse_phenom": (C['warn'],   "#1a1205"),
         "svc_type_operator_note":  (C['blue_light'], C['blue_dark']),
+        "marker_type_cough":       (C['warn'], C['bg_main']),
+        "marker_type_procedure":   (C['blue_light'], C['blue_dark']),
+        "marker_type_position":    (C['ok_hover'], C['bg_main']),
+        "marker_type_suction":     (C['warn'], C['bg_main']),
+        "marker_type_note":        (C['text'], C['bg_main']),
     }
 
     def _type_badge(self, type_key: str) -> QLabel:
@@ -298,12 +331,20 @@ class _EventRow(QFrame):
 class ServiceInfoScreen(QWidget):
     """Протоколирование неблагоприятных событий текущего сеанса."""
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        marker_service: EventMarkerService | None = None,
+        adverse_event_service: AdverseEventService | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
+        self._marker_service = marker_service
+        self._adverse_event_service = adverse_event_service
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
-        self._events: list[dict] = _mock_events()
+        self._events: list[dict] = self._load_events()
         self._filter_type: str | None = None   # None = all
+        self._search_text = ""
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(40, 24, 40, 24)
@@ -362,6 +403,25 @@ class ServiceInfoScreen(QWidget):
         self._rebuild_combo()
         self._combo_filter.currentIndexChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self._combo_filter)
+
+        self._edit_search = QLineEdit()
+        self._edit_search.setPlaceholderText(t("svc_search_placeholder"))
+        self._edit_search.setFixedWidth(180)
+        self._edit_search.textChanged.connect(self._on_search_changed)
+        toolbar.addWidget(self._edit_search)
+
+        self._date_from = QDateTimeEdit()
+        self._date_from.setDisplayFormat("dd.MM.yyyy HH:mm")
+        self._date_from.setCalendarPopup(True)
+        self._date_from.setDateTime(datetime(2000, 1, 1))
+        self._date_from.dateTimeChanged.connect(lambda _value: self._rebuild_list())
+        toolbar.addWidget(self._date_from)
+        self._date_to = QDateTimeEdit()
+        self._date_to.setDisplayFormat("dd.MM.yyyy HH:mm")
+        self._date_to.setCalendarPopup(True)
+        self._date_to.setDateTime(datetime.now().replace(hour=23, minute=59, second=59))
+        self._date_to.dateTimeChanged.connect(lambda _value: self._rebuild_list())
+        toolbar.addWidget(self._date_to)
 
         self._btn_reset = QPushButton(t("svc_btn_reset_filter"))
         self._btn_reset.setFixedHeight(32)
@@ -506,7 +566,10 @@ class ServiceInfoScreen(QWidget):
 
         visible = [
             ev for ev in self._events
-            if self._filter_type is None or ev["type"] == self._filter_type
+            if (self._filter_type is None or ev["type"] == self._filter_type)
+            and self._date_from.dateTime().toPython() <= ev["occurred_local"]
+            <= self._date_to.dateTime().toPython()
+            and self._search_text in f'{ev["desc"]} {ev["type"]}'.casefold()
         ]
 
         if not visible:
@@ -516,6 +579,7 @@ class ServiceInfoScreen(QWidget):
 
         for i, ev in enumerate(reversed(visible)):
             row = _EventRow(len(visible) - i, ev, even=(i % 2 == 0))
+            row.correction_requested.connect(self._open_correction_dialog)
             self._list_layout.addWidget(row)
 
         self._list_layout.addStretch()
@@ -541,12 +605,165 @@ class ServiceInfoScreen(QWidget):
 
     def _reset_filter(self):
         self._combo_filter.setCurrentIndex(0)
+        self._edit_search.clear()
+
+    def _on_search_changed(self, text: str):
+        self._search_text = text.strip().casefold()
+        self._rebuild_list()
 
     def _open_add_dialog(self):
-        dlg = AddEventDialog(self)
-        if dlg.exec() == QDialog.Accepted:
-            self._events.append(dlg.result_event())
-            self._rebuild_list()
+        if self._adverse_event_service is not None:
+            self._open_adverse_dialog()
+            return
+        QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+
+    def _open_adverse_dialog(self):
+        service = self._adverse_event_service
+        if service is None:
+            return
+        dlg = AddEventDialog(
+            self, default_author=service.default_author, event_types=_ADVERSE_TYPE_KEYS
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+        values = dlg.result_event()
+        type_map = {
+            "svc_type_tech_error": "technical_error",
+            "svc_type_adverse_event": "adverse_event",
+            "svc_type_adverse_phenom": "adverse_phenomenon",
+            "svc_type_operator_note": "operator_note",
+        }
+        try:
+            occurred_local = datetime.strptime(values["dt"], "%d.%m.%Y  %H:%M:%S").replace(
+                tzinfo=datetime.now().astimezone().tzinfo
+            )
+            service.create(
+                type_map.get(values["type"], "operator_note"), values["desc"],
+                values["author"], occurred_at_utc=occurred_local.astimezone(timezone.utc),
+            )
+        except (ValueError, AdverseEventError):
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        self.refresh()
+
+    def _open_marker_dialog(self):
+        service = self._marker_service
+        if service is None:
+            return
+        if not service.has_current_study:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        dialog = EventMarkerDialog(
+            service.current_position_seconds,
+            service.default_author,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        try:
+            service.create(values.event_type, values.description, values.author)
+        except EventMarkerError:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        self.refresh()
+
+    def _open_correction_dialog(self, original: Event):
+        if original.category is EventCategory.ADVERSE_EVENT:
+            self._open_adverse_correction(original)
+            return
+        service = self._marker_service
+        if service is None:
+            return
+        dialog = EventMarkerDialog(
+            original.position_seconds,
+            service.default_author or original.author,
+            correction=original,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        try:
+            service.correct(
+                original.id,
+                values.description,
+                values.author,
+                event_type=values.event_type,
+            )
+        except EventMarkerError:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        self.refresh()
+
+    def _open_adverse_correction(self, original: Event):
+        service = self._adverse_event_service
+        if service is None:
+            return
+        dialog = AddEventDialog(
+            self, default_author=service.default_author or original.author,
+            original=original, event_types=_ADVERSE_TYPE_KEYS,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        values = dialog.result_event()
+        type_map = {
+            "svc_type_tech_error": "technical_error",
+            "svc_type_adverse_event": "adverse_event",
+            "svc_type_adverse_phenom": "adverse_phenomenon",
+            "svc_type_operator_note": "operator_note",
+        }
+        try:
+            service.correct(
+                original.id, values["desc"], values["author"],
+                event_type=type_map.get(values["type"], original.event_type),
+            )
+        except AdverseEventError:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        self.refresh()
+
+    def refresh(self):
+        self._events = self._load_events()
+        self._rebuild_list()
+
+    def _load_events(self) -> list[dict]:
+        if self._adverse_event_service is None and self._marker_service is None:
+            return []
+        type_keys = {
+            "cough": "marker_type_cough",
+            "procedure": "marker_type_procedure",
+            "position_change": "marker_type_position",
+            "suction": "marker_type_suction",
+            "operator_note": "marker_type_note",
+        }
+        result = []
+        if self._adverse_event_service is not None:
+            events = self._adverse_event_service.list_current()
+        else:
+            events = self._marker_service.list_for_current_study()
+        adverse_type_keys = {
+            "technical_error": "svc_type_tech_error",
+            "adverse_event": "svc_type_adverse_event",
+            "adverse_phenomenon": "svc_type_adverse_phenom",
+            "operator_note": "svc_type_operator_note",
+        }
+        for event in events:
+            correction = (
+                f"{t('marker_corrects')} {str(event.corrects_event_id)[:8]} · "
+                if event.corrects_event_id else ""
+            )
+            result.append({
+                "dt": event.occurred_at_utc.astimezone().strftime("%d.%m.%Y  %H:%M:%S"),
+                "type": (adverse_type_keys if event.category is EventCategory.ADVERSE_EVENT else type_keys).get(event.event_type, "marker_type_note"),
+                "desc": (
+                    f"{correction}{event.text} "
+                    f"[{event.author} · {_format_position(event.position_seconds)}]"
+                ),
+                "event": event,
+                "occurred_local": event.occurred_at_utc.astimezone().replace(tzinfo=None),
+            })
+        return result
 
     # ── i18n ─────────────────────────────────────────────────────────────────
 
@@ -557,6 +774,7 @@ class ServiceInfoScreen(QWidget):
         self._btn_reset.setText(t("svc_btn_reset_filter"))
         self._btn_add.setText(t("svc_btn_add"))
         self._lbl_empty.setText(t("svc_no_events"))
+        self._edit_search.setPlaceholderText(t("svc_search_placeholder"))
 
         for key, lbl in self._hcells.items():
             lbl.setText(t(key))

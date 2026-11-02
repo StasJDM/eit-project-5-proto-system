@@ -1,12 +1,9 @@
-"""Глобальные счётчики длительности ЭИТ и использования ЭС (мок-сессия)."""
+"""Shared UI counters synchronized with the current monitoring session."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QTimer, Signal
-
-# Типичная демо-сессия: мониторинг ~24 мин, накопленное время ЭС ~2 ч 16 мин
-MOCK_EIT_START_S = 24 * 60 + 12          # 00:24:12
-MOCK_ES_START_S = 2 * 3600 + 16 * 60 + 8  # 02:16:08
+from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
+from .application.session_clock import SessionClockService
 
 
 def fmt_duration(total_s: int) -> str:
@@ -26,13 +23,16 @@ class SessionTimers(QObject):
     @classmethod
     def instance(cls, parent: QObject | None = None) -> SessionTimers:
         if cls._instance is None:
-            cls._instance = SessionTimers(parent)
+            # The shared timer must outlive individual windows. Parenting it to
+            # the first MainWindow leaves a dangling Python singleton after
+            # that window is closed and another one is created.
+            application = QCoreApplication.instance()
+            cls._instance = SessionTimers(application or parent)
         return cls._instance
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._eit_s = MOCK_EIT_START_S
-        self._es_s = MOCK_ES_START_S
+        self._service: SessionClockService | None = None
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -40,11 +40,19 @@ class SessionTimers(QObject):
         self._emit()
 
     def values(self) -> tuple[str, str]:
-        return fmt_duration(self._eit_s), fmt_duration(self._es_s)
+        if self._service is None:
+            return fmt_duration(0), fmt_duration(0)
+        snapshot = self._service.snapshot
+        return (
+            fmt_duration(int(snapshot.eit_seconds)),
+            fmt_duration(int(snapshot.electrode_system_seconds)),
+        )
 
     def _on_tick(self):
-        self._eit_s += 1
-        self._es_s += 1
+        self._emit()
+
+    def bind(self, service: SessionClockService | None) -> None:
+        self._service = service
         self._emit()
 
     def _emit(self):

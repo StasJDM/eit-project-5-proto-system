@@ -44,23 +44,17 @@ class HeaderBar(QWidget):
         self._patient_mode = "child"
 
         # ── Mode indicator ───────────────────────────────────────────────────
-        mode_lbl = QLabel(" P ")
-        mode_lbl.setFixedSize(34, 34)
-        mode_lbl.setAlignment(Qt.AlignCenter)
-        mode_lbl.setStyleSheet(f"""
-            background-color: #0d3a7a;
-            color: #40c4ff;
-            border: 1px solid {C['border_light']};
-            border-radius: 4px;
-            font-size: {FONT_VALUE}px;
-            font-weight: bold;
-        """)
-        layout.addWidget(mode_lbl)
+        self.lbl_mode = QLabel(t("hdr_live"))
+        self._playback_mode = False
+        self.lbl_mode.setFixedSize(62, 34)
+        self.lbl_mode.setAlignment(Qt.AlignCenter)
+        self._set_mode_style(False)
+        layout.addWidget(self.lbl_mode)
 
         layout.addWidget(_sep())
 
         # ── Breathing type display ───────────────────────────────────────────
-        self.lbl_breath_type = QLabel(f"  {t('hdr_breath_normal')}  ")
+        self.lbl_breath_type = QLabel(f"  {t('analysis_bt_undetermined')}  ")
         self.lbl_breath_type.setAlignment(Qt.AlignCenter)
         self.lbl_breath_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.lbl_breath_type.setStyleSheet(self._breath_style(False))
@@ -118,7 +112,27 @@ class HeaderBar(QWidget):
         self.btn_menu.setToolTip(t("hdr_menu_tooltip"))
         self.btn_alarm.setText(t("hdr_alarm"))
         if not self._alarm_active:
-            self.lbl_breath_type.setText(f"  {t('hdr_breath_normal')}  ")
+            self.lbl_breath_type.setText(f"  {t('analysis_bt_undetermined')}  ")
+        self.lbl_mode.setText(
+            t("hdr_playback") if self._playback_mode else t("hdr_live")
+        )
+
+    def set_playback_mode(self, active: bool) -> None:
+        self._playback_mode = active
+        self.lbl_mode.setText(t("hdr_playback") if active else t("hdr_live"))
+        self._set_mode_style(active)
+
+    def _set_mode_style(self, playback: bool) -> None:
+        color = C['warn'] if playback else "#40c4ff"
+        background = "#3a2200" if playback else "#0d3a7a"
+        self.lbl_mode.setStyleSheet(f"""
+            background-color: {background};
+            color: {color};
+            border: 1px solid {C['border_light']};
+            border-radius: 4px;
+            font-size: {FONT_SMALL}px;
+            font-weight: bold;
+        """)
 
     def set_alarm(self, active: bool, text: str = ""):
         self._alarm_active = active

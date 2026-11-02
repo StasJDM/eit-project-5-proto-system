@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPen, QColor
 from ..waveform_draw import draw_filled_waveform
-from ..mock_data import DISPLAY_SAMPLES
+from ..application.monitoring import DISPLAY_SAMPLES
 from ..styles import (
     C, WAVE_COLORS, AERATION_COLOR_T, AERATION_COLOR_R, AERATION_COLOR_L,
     AERATION_ROI_R, AERATION_ROI_L, SECTION_COLORS,
@@ -27,6 +27,7 @@ class _WaveCanvas(QWidget):
     def __init__(self, color: str, parent=None):
         super().__init__(parent)
         self._data  = np.zeros(DISPLAY_SAMPLES)
+        self._markers: tuple[tuple[float, str], ...] = ()
         self._color = QColor(color)
         self._bg    = QColor(C["bg_wave"])
         self.setMinimumHeight(44)
@@ -35,6 +36,10 @@ class _WaveCanvas(QWidget):
 
     def set_data(self, arr: np.ndarray):
         self._data = arr
+        self.update()
+
+    def set_markers(self, markers: tuple[tuple[float, str], ...]):
+        self._markers = markers
         self.update()
 
     def paintEvent(self, _):
@@ -70,6 +75,10 @@ class _WaveCanvas(QWidget):
             ys.append(y)
 
         draw_filled_waveform(painter, xs, ys, self._color, my + ph)
+        painter.setPen(QPen(QColor(C["warn"]), 2, Qt.DashLine))
+        for position, _label in self._markers:
+            x = mx + max(0.0, min(1.0, position)) * pw
+            painter.drawLine(int(x), my, int(x), my + ph)
 
 
 # ── Single labelled waveform row ─────────────────────────────────────────────
@@ -134,9 +143,9 @@ class _WaveRow(QWidget):
             rr_lay = QVBoxLayout(rr_box)
             rr_lay.setContentsMargins(2, 0, 2, 0)
             rr_lay.setSpacing(0)
-            lbl_rr = QLabel("ЧД")
-            lbl_rr.setAlignment(Qt.AlignCenter)
-            lbl_rr.setStyleSheet(
+            self._lbl_rr_title = QLabel(t("wave_rr_short"))
+            self._lbl_rr_title.setAlignment(Qt.AlignCenter)
+            self._lbl_rr_title.setStyleSheet(
                 f"color: {C['text_dim']}; font-size: {_LBL_DIM}px; background: transparent;"
             )
             self.lbl_rr_val = QLabel("15")
@@ -149,11 +158,12 @@ class _WaveRow(QWidget):
             self.lbl_rr_unit.setStyleSheet(
                 f"color: {C['text_dim']}; font-size: {_LBL_UNIT}px; background: transparent;"
             )
-            rr_lay.addWidget(lbl_rr)
+            rr_lay.addWidget(self._lbl_rr_title)
             rr_lay.addWidget(self.lbl_rr_val)
             rr_lay.addWidget(self.lbl_rr_unit)
             lay.addWidget(rr_box)
         else:
+            self._lbl_rr_title = None
             self.lbl_rr_val  = None
             self.lbl_rr_unit = None
 
@@ -197,13 +207,13 @@ class _WaveRow(QWidget):
         tr_lay.addWidget(self.lbl_trend)
         lay.addWidget(tr_box)
 
-        i18n.language_changed.connect(self._retranslate_trend_title)
+        i18n.language_changed.connect(self.retranslate)
 
     def update_data(self, arr: np.ndarray):
         self.canvas.set_data(arr)
 
-    def update_pct(self, value: float):
-        self.lbl_pct.setText(f"{value:.1f}")
+    def update_pct(self, value: float | None):
+        self.lbl_pct.setText("—" if value is None else f"{value:.1f}")
 
     def update_trend(self, value: float):
         arrow = "▲" if value >= 0 else "▼"
@@ -222,11 +232,13 @@ class _WaveRow(QWidget):
             font-weight:bold;
         """)
 
-    def update_rr(self, rr: float):
+    def update_rr(self, rr: float | None):
         if self.lbl_rr_val:
-            self.lbl_rr_val.setText(f"{rr:.0f}")
+            self.lbl_rr_val.setText("—" if rr is None else f"{rr:.0f}")
 
     def retranslate(self):
+        if self._lbl_rr_title:
+            self._lbl_rr_title.setText(t("wave_rr_short"))
         if self.lbl_rr_unit:
             self.lbl_rr_unit.setText(t("wave_rr_unit"))
         self._retranslate_trend_title()
@@ -292,7 +304,9 @@ class _LungColumn:
 # ── Regional aeration panel (10 graphs) ──────────────────────────────────────
 
 class RegionalWaveformPanel(QWidget):
-    """10 графиков: 2 суммарных (R/L) + 8 ROI, в двух колонках."""
+    """10 графиков: левая колонка L, правая колонка R."""
+
+    regional_order = ("L", "R")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -305,9 +319,9 @@ class RegionalWaveformPanel(QWidget):
         self._col_r = self._build_column("R", "wave_r_label", 0)
         self._col_l = self._build_column("L", "wave_l_label", 4)
 
-        outer.addWidget(self._col_r.widget, stretch=1)
-        outer.addWidget(_vsep())
         outer.addWidget(self._col_l.widget, stretch=1)
+        outer.addWidget(_vsep())
+        outer.addWidget(self._col_r.widget, stretch=1)
 
         i18n.language_changed.connect(self.retranslate)
 
@@ -373,11 +387,21 @@ class RegionalWaveformPanel(QWidget):
         for row in self._col_r.rois + self._col_l.rois:
             row.retranslate()
 
+    def set_event_markers(self, events, time_values):
+        markers = _relative_markers(events, time_values)
+        for row in (
+            self._col_r.agg, self._col_l.agg,
+            *self._col_r.rois, *self._col_l.rois,
+        ):
+            row.canvas.set_markers(markers)
+
 
 # ── Main waveform panel ───────────────────────────────────────────────────────
 
 class WaveformPanel(QWidget):
-    """9-channel waveform display: 1 global + 4 right + 4 left ROIs."""
+    """9-channel display: global + left column + right column."""
+
+    regional_order = ("L", "R")
 
     def __init__(
         self,
@@ -426,7 +450,7 @@ class WaveformPanel(QWidget):
 
         if show_regional:
             if self._dense:
-                # Две колонки: R (средний Σ + малые ROI) | L (средний Σ + малые ROI)
+                # Две колонки: L (средний Σ + малые ROI) | R (средний Σ + малые ROI)
                 regional = QWidget()
                 regional.setStyleSheet("background:transparent;")
                 reg_lay = QHBoxLayout(regional)
@@ -434,8 +458,8 @@ class WaveformPanel(QWidget):
                 reg_lay.setSpacing(0)
 
                 for section, i18n_key, roi_start, agg_color, roi_colors in (
-                    ("R", "wave_r_label", 0, AERATION_COLOR_R, AERATION_ROI_R),
                     ("L", "wave_l_label", 4, AERATION_COLOR_L, AERATION_ROI_L),
+                    ("R", "wave_r_label", 0, AERATION_COLOR_R, AERATION_ROI_R),
                 ):
                     col = QWidget()
                     col.setStyleSheet("background:transparent;")
@@ -469,22 +493,12 @@ class WaveformPanel(QWidget):
                         target.append(row)
 
                     reg_lay.addWidget(col, stretch=1)
-                    if section == "R":
+                    if section == "L":
                         reg_lay.addWidget(_vsep())
 
                 outer.addWidget(regional, stretch=_MAIN_REGIONAL_STRETCH)
             else:
                 roi_size = "normal"
-                self._hdr_r = _SectionHeader("wave_r_label", "R")
-                outer.addWidget(self._hdr_r)
-                self.row_r_agg = _WaveRow("Σ R", AERATION_COLOR_R, size="medium")
-                outer.addWidget(self.row_r_agg)
-                for i in range(4):
-                    row = _WaveRow(f"ROI_{i+1}", AERATION_ROI_R[i], size=roi_size)
-                    outer.addWidget(row)
-                    self.rows_r.append(row)
-                outer.addWidget(_hsep())
-
                 self._hdr_l = _SectionHeader("wave_l_label", "L")
                 outer.addWidget(self._hdr_l)
                 self.row_l_agg = _WaveRow("Σ L", AERATION_COLOR_L, size="medium")
@@ -493,6 +507,16 @@ class WaveformPanel(QWidget):
                     row = _WaveRow(f"ROI_{i+5}", AERATION_ROI_L[i], size=roi_size)
                     outer.addWidget(row)
                     self.rows_l.append(row)
+                outer.addWidget(_hsep())
+
+                self._hdr_r = _SectionHeader("wave_r_label", "R")
+                outer.addWidget(self._hdr_r)
+                self.row_r_agg = _WaveRow("Σ R", AERATION_COLOR_R, size="medium")
+                outer.addWidget(self.row_r_agg)
+                for i in range(4):
+                    row = _WaveRow(f"ROI_{i+1}", AERATION_ROI_R[i], size=roi_size)
+                    outer.addWidget(row)
+                    self.rows_r.append(row)
 
         if not expand_global and not self._dense:
             outer.addStretch()
@@ -528,7 +552,9 @@ class WaveformPanel(QWidget):
 
         if self.row_global is not None:
             self.row_global.update_data(waves["global"])
-            self.row_global.update_pct(100.0)
+            self.row_global.update_pct(100.0 if roi_pcts and any(
+                value is not None for value in roi_pcts
+            ) else None)
             self.row_global.update_rr(rr)
             if trends:
                 self.row_global.update_trend(trends.get("global", 0.0))
@@ -570,3 +596,26 @@ class WaveformPanel(QWidget):
             row.retranslate()
         if self.btn_event is not None:
             self.btn_event.setText(t("wave_event_marker"))
+
+    def set_event_markers(self, events, time_values):
+        markers = _relative_markers(events, time_values)
+        rows = [self.row_global, self.row_r_agg, self.row_l_agg, *self.rows_r, *self.rows_l]
+        for row in rows:
+            if row is not None:
+                row.canvas.set_markers(markers)
+
+
+def _relative_markers(events, time_values) -> tuple[tuple[float, str], ...]:
+    times = np.asarray(time_values, dtype=float)
+    if times.size < 2:
+        return ()
+    start, end = float(times[0]), float(times[-1])
+    span = end - start
+    if span <= 0:
+        return ()
+    result = []
+    for event in events:
+        position = float(event.position_seconds)
+        if start <= position <= end + 0.5:
+            result.append((min(1.0, (position - start) / span), event.event_type))
+    return tuple(result)

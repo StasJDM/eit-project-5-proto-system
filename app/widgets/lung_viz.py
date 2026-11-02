@@ -1,130 +1,285 @@
-"""Animated lung cross-section visualisation.
+"""Native Qt rendering of reconstructed EIT cross-sections.
 
-Supports runtime language switching via i18n.language_changed.
+Every value in ``reconstructed_delta_z`` is painted as its own grid cell. The
+widget uses QPainter rather than a plotting library so it stays lightweight and
+visually consistent with the monitor UI.
 """
 
+from __future__ import annotations
+
 import math
-from PySide6.QtWidgets import QWidget
+from collections.abc import Sequence
+
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont
-from ..styles import C, SECTION_COLORS
-from ..i18n import t, i18n
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QWidget
+
+from ..i18n import i18n, t
+from ..styles import C
 
 
 class LungVizWidget(QWidget):
+    """Discrete heat map shown in direct patient orientation (L left, R right)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(220, 240)
-        self._phase    = 0.0
-        self._roi_vals = [0.5] * 8
-        i18n.language_changed.connect(lambda _: self.update())
+        self.setMinimumSize(150, 150)
+        self._phase = 0.0
+        self._roi_vals: tuple[float, ...] = (0.0,) * 8
+        self._delta_reconstruction: tuple[tuple[float, ...], ...] | None = None
+        self._absolute_conductivity: tuple[tuple[float, ...], ...] | None = None
+        self._display_mode = "absolute"
+        self._color_limit: float | None = None
+        self._rendered_element_count = 0
+        self.setToolTip(t("lung_reconstruction_tooltip"))
+        i18n.language_changed.connect(self._on_language_changed)
 
-    # ── Public ───────────────────────────────────────────────────────────────
+    @property
+    def reconstruction_shape(self) -> tuple[int, int] | None:
+        reconstruction = self._displayed_map()
+        if reconstruction is None:
+            return None
+        return len(reconstruction), len(reconstruction[0])
 
-    def update_state(self, phase: float, roi_vals: list):
-        self._phase    = max(0.0, min(1.0, phase))
-        self._roi_vals = list(roi_vals)
+    @property
+    def display_mode(self) -> str:
+        return self._effective_display_mode()
+
+    @property
+    def delta_color_limit(self) -> float | None:
+        return self._color_limit
+
+    @property
+    def patient_left_is_screen_left(self) -> bool:
+        return True
+
+    @property
+    def rendered_element_count(self) -> int:
+        """Number of finite elements painted during the most recent render."""
+        return self._rendered_element_count
+
+    def _on_language_changed(self, _language: str) -> None:
+        self.setToolTip(t("lung_reconstruction_tooltip"))
         self.update()
 
-    # ── Paint ─────────────────────────────────────────────────────────────────
+    def update_state(
+        self,
+        phase: float | None,
+        roi_vals: Sequence[float | None],
+        reconstruction_map: Sequence[Sequence[float]] | None = None,
+        absolute_conductivity_map: Sequence[Sequence[float]] | None = None,
+    ) -> None:
+        self._phase = max(0.0, min(1.0, phase)) if phase is not None else 0.0
+        self._roi_vals = tuple(
+            float(value) if value is not None else 0.0 for value in roi_vals
+        )
+        self._delta_reconstruction = self._validated_map(reconstruction_map)
+        self._absolute_conductivity = self._validated_map(absolute_conductivity_map)
+        if self._delta_reconstruction is None and self._absolute_conductivity is None:
+            self._color_limit = None
+        if self._delta_reconstruction is not None:
+            frame_limit = max(
+                abs(value) for row in self._delta_reconstruction for value in row
+            )
+            if self._color_limit is None and frame_limit > 1e-9:
+                self._color_limit = frame_limit
+        self.update()
 
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
+    def _effective_display_mode(self) -> str:
+        if self._display_mode == "absolute" and self._absolute_conductivity is not None:
+            return "absolute"
+        return "delta"
 
-        w, h = self.width(), self.height()
-        p.fillRect(0, 0, w, h, QColor(C["bg_panel"]))
+    def _displayed_map(self) -> tuple[tuple[float, ...], ...] | None:
+        if self._effective_display_mode() == "absolute":
+            return self._absolute_conductivity
+        return self._delta_reconstruction
 
-        # Title
-        p.setPen(QColor(C["text_dim"]))
-        p.setFont(QFont("Arial", 20, QFont.Bold))
-        p.drawText(0, 2, w, 30, Qt.AlignCenter, t("lung_breath_cycle"))
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.LeftButton
+            and self._delta_reconstruction is not None
+            and self._absolute_conductivity is not None
+        ):
+            self._display_mode = "delta" if self._display_mode == "absolute" else "absolute"
+            self.update()
+        super().mouseReleaseEvent(event)
 
-        top_y = 34
-        p.setFont(QFont("Arial", 16, QFont.Bold))
-        p.setPen(QColor(SECTION_COLORS["R"]))
-        p.drawText(int(w * 0.18), top_y, 24, 20, Qt.AlignCenter, "R")
-        p.setPen(QColor(SECTION_COLORS["L"]))
-        p.drawText(int(w * 0.62), top_y, 24, 20, Qt.AlignCenter, "L")
+    @staticmethod
+    def _validated_map(
+        values: Sequence[Sequence[float]] | None,
+    ) -> tuple[tuple[float, ...], ...] | None:
+        if values is None:
+            return None
+        try:
+            result = tuple(tuple(float(value) for value in row) for row in values)
+        except (TypeError, ValueError):
+            return None
+        if not result or not result[0]:
+            return None
+        width = len(result[0])
+        if any(len(row) != width for row in result):
+            return None
+        if any(not math.isfinite(value) for row in result for value in row):
+            return None
+        return result
 
-        cx   = w // 2
-        cy   = h // 2 + 10
-        tx_w = int(w * 0.76)
-        tx_h = int(h * 0.62)
-        scale = 1.0 + 0.12 * self._phase
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(C["bg_panel"]))
 
-        # Thorax
-        p.setPen(QPen(QColor(C["border_light"]), 2))
-        p.setBrush(QBrush(QColor(C["thorax"])))
-        p.drawEllipse(QRectF(cx - tx_w / 2, cy - tx_h / 2, tx_w, tx_h))
+        compact = self.width() < 190 or self.height() < 190
+        title_h = 22 if compact else 30
+        bottom_h = 19 if compact else 27
+        side_margin = 20 if compact else 30
 
-        # Spine marker
-        p.setPen(QColor(C["text_lo"]))
-        p.setFont(QFont("Arial", 14))
-        p.drawText(cx - 6, int(cy + tx_h / 2) - 14, 12, 16, Qt.AlignCenter, "▼")
+        painter.setPen(QColor(C["text_dim"]))
+        painter.setFont(QFont("Arial", 10 if compact else 13, QFont.Bold))
+        painter.drawText(
+            0, 0, self.width(), title_h,
+            Qt.AlignCenter,
+            t(
+                "lung_absolute_conductivity_map"
+                if self._effective_display_mode() == "absolute"
+                else "lung_reconstruction_map"
+            ),
+        )
 
-        # Right lung
-        rl_cx = cx - int(tx_w * 0.24)
-        rl_w  = int(tx_w * 0.31 * scale)
-        rl_h  = int(tx_h * 0.74 * scale)
-        r_vent = sum(self._roi_vals[:4]) / 4.0
-        p.setPen(QPen(QColor(C["border_light"]), 1))
-        p.setBrush(QBrush(self._lung_color(r_vent, "right")))
-        p.drawEllipse(QRectF(rl_cx - rl_w / 2, cy - rl_h / 2, rl_w, rl_h))
+        available_h = max(1, self.height() - title_h - bottom_h)
+        map_size = max(1, min(self.width() - 2 * side_margin, available_h))
+        map_left = (self.width() - map_size) // 2
+        map_top = title_h + (available_h - map_size) // 2
+        map_rect = QRectF(map_left, map_top, map_size, map_size)
 
-        # Left lung
-        ll_cx = cx + int(tx_w * 0.23)
-        ll_w  = int(tx_w * 0.28 * scale)
-        ll_h  = int(tx_h * 0.70 * scale)
-        l_vent = sum(self._roi_vals[4:]) / 4.0
-        p.setBrush(QBrush(self._lung_color(l_vent, "left")))
-        p.drawEllipse(QRectF(ll_cx - ll_w / 2, cy - ll_h / 2, ll_w, ll_h))
+        painter.setPen(QPen(QColor(C["border"]), 1))
+        painter.setBrush(QColor(C["bg_card"]))
+        painter.drawRoundedRect(map_rect.adjusted(-3, -3, 3, 3), 7, 7)
 
-        # Electrode dots
-        p.setPen(QPen(QColor("#40c4ff"), 1))
-        p.setBrush(QBrush(QColor("#40c4ff")))
-        for i in range(16):
-            angle = 2 * math.pi * i / 16 - math.pi / 2
-            ex = cx + (tx_w / 2) * math.cos(angle)
-            ey = cy + (tx_h / 2) * math.sin(angle)
-            p.drawEllipse(QRectF(ex - 2.5, ey - 2.5, 5, 5))
+        self._draw_map(painter, map_rect)
+        self._draw_orientation(painter, map_rect, compact)
+        self._draw_legend(painter, map_rect, compact)
 
-        self._draw_roi_labels(p, cx, cy, tx_w, tx_h)
+    def _draw_map(self, painter: QPainter, rect: QRectF) -> None:
+        self._rendered_element_count = 0
+        reconstruction = self._displayed_map()
+        if reconstruction is None:
+            painter.setPen(QColor(C["text_lo"]))
+            painter.setFont(QFont("Arial", 9))
+            symbol = "σ rel.\n—" if self._effective_display_mode() == "absolute" else "ΔZ\n—"
+            painter.drawText(rect, Qt.AlignCenter, symbol)
+            return
 
-        # Bed surface — visible posterior marker so orientation is unambiguous
-        bar_px = 12
-        bar_y  = h - bar_px - 4
-        bm     = int(w * 0.04)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(QColor("#3d5a72")))
-        p.drawRect(bm, bar_y, w - 2 * bm, bar_px)
+        rows = len(reconstruction)
+        columns = len(reconstruction[0])
+        cell_w = rect.width() / columns
+        cell_h = rect.height() / rows
+        grid_pen = QPen(QColor(255, 255, 255, 18), 0.45)
 
-    def _lung_color(self, vent: float, side: str) -> QColor:
-        """Бежево-серая карта: правое — тёплый песок, левое — холодный серо-беж."""
-        lvl = max(0.0, min(1.0, vent + 0.3 * self._phase))
-        if side == "right":
-            # тёплый беж: от тёмного какао до светлого песка
-            r = int(88 + lvl * 142)
-            g = int(78 + lvl * 128)
-            b = int(62 + lvl * 98)
-        else:
-            # холодный серо-беж: от графита до жемчужного
-            r = int(76 + lvl * 138)
-            g = int(80 + lvl * 132)
-            b = int(78 + lvl * 128)
-        return QColor(r, g, b, 220)
+        # Pixel cells stay crisp; antialiasing is restored for contours.
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setPen(grid_pen)
+        for row_index, row in enumerate(reconstruction):
+            y0 = rect.top() + row_index * cell_h
+            y1 = rect.top() + (row_index + 1) * cell_h
+            for column_index, value in enumerate(row):
+                # Reconstruction coordinates use the radiological convention.
+                # Mirror only the presentation so the patient's left side is
+                # also on the left side of the operator's screen.
+                display_column = columns - 1 - column_index
+                x0 = rect.left() + display_column * cell_w
+                x1 = rect.left() + (display_column + 1) * cell_w
+                painter.setBrush(self._element_color(value))
+                painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+                self._rendered_element_count += 1
+        painter.setRenderHint(QPainter.Antialiasing, True)
 
-    def _draw_roi_labels(self, p, cx, cy, tw, th):
-        w = self.width()
-        p.setFont(QFont("Arial", 13))
-        p.setPen(QColor(C["text_dim"]))
-        step = th / 5
-        left_x = 4
-        right_x = w - 58
-        for i, name in enumerate(["ROI_1", "ROI_2", "ROI_3", "ROI_4"]):
-            y = int(cy - th / 2 + step * (i + 0.6))
-            p.drawText(left_x, y, 54, 20, Qt.AlignLeft | Qt.AlignVCenter, name)
-        for i, name in enumerate(["ROI_5", "ROI_6", "ROI_7", "ROI_8"]):
-            y = int(cy - th / 2 + step * (i + 0.6))
-            p.drawText(right_x, y, 54, 20, Qt.AlignRight | Qt.AlignVCenter, name)
+        # Landmarks are overlays; they never replace or aggregate map cells.
+        thorax = QPainterPath()
+        thorax.addEllipse(rect.adjusted(
+            rect.width() * 0.04, rect.height() * 0.09,
+            -rect.width() * 0.04, -rect.height() * 0.09,
+        ))
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(185, 211, 225, 145), 1.2))
+        painter.drawPath(thorax)
+        painter.setPen(QPen(QColor(185, 211, 225, 85), 0.8, Qt.DashLine))
+        painter.drawLine(
+            rect.center().x(), rect.top() + rect.height() * 0.13,
+            rect.center().x(), rect.bottom() - rect.height() * 0.13,
+        )
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#40c4ff"))
+        cx, cy = rect.center().x(), rect.center().y()
+        radius_x, radius_y = rect.width() * 0.48, rect.height() * 0.41
+        dot = max(1.4, rect.width() * 0.012)
+        for index in range(16):
+            angle = 2 * math.pi * index / 16 - math.pi / 2
+            x = cx + radius_x * math.cos(angle)
+            y = cy + radius_y * math.sin(angle)
+            painter.drawEllipse(QRectF(x - dot, y - dot, dot * 2, dot * 2))
+
+    def _element_color(self, value: float) -> QColor:
+        if self._effective_display_mode() == "absolute":
+            if value <= 0.0:
+                return QColor("#101820")
+            level = max(-1.5, min(1.5, math.log(value))) / 3.0 + 0.5
+            if level < 0.5:
+                return self._mix(QColor("#283593"), QColor("#17333b"), level * 2.0)
+            return self._mix(QColor("#17333b"), QColor("#ffc857"), (level - 0.5) * 2.0)
+        level = max(-1.0, min(1.0, value / max(self._color_limit or 0.0, 1e-9)))
+        if level < 0.0:
+            return self._mix(QColor("#17232d"), QColor("#29b6d1"), abs(level))
+        return self._mix(QColor("#17232d"), QColor("#ffc857"), level)
+
+    @staticmethod
+    def _mix(low: QColor, high: QColor, amount: float) -> QColor:
+        amount = max(0.0, min(1.0, amount))
+        return QColor(
+            round(low.red() + (high.red() - low.red()) * amount),
+            round(low.green() + (high.green() - low.green()) * amount),
+            round(low.blue() + (high.blue() - low.blue()) * amount),
+        )
+
+    def _draw_orientation(self, painter: QPainter, rect: QRectF, compact: bool) -> None:
+        painter.setFont(QFont("Arial", 8 if compact else 10, QFont.Bold))
+        painter.setPen(QColor(C["text_dim"]))
+        painter.drawText(QRectF(rect.left() - 20, rect.top(), 18, 18), Qt.AlignCenter, "L")
+        painter.drawText(QRectF(rect.right() + 2, rect.top(), 18, 18), Qt.AlignCenter, "R")
+        painter.setFont(QFont("Arial", 7 if compact else 9))
+        painter.drawText(
+            QRectF(rect.left(), rect.top() - 16, rect.width(), 14), Qt.AlignCenter, "V"
+        )
+        painter.drawText(
+            QRectF(rect.left(), rect.bottom() + 2, rect.width(), 14), Qt.AlignCenter, "D"
+        )
+
+    def _draw_legend(self, painter: QPainter, rect: QRectF, compact: bool) -> None:
+        legend_w = min(rect.width() * 0.62, 150.0)
+        legend_h = 5.0 if compact else 7.0
+        legend_x = rect.center().x() - legend_w / 2
+        legend_y = self.height() - (10 if compact else 16)
+        steps = max(12, int(legend_w))
+        painter.setPen(Qt.NoPen)
+        for index in range(steps):
+            fraction = index / max(steps - 1, 1)
+            if self._effective_display_mode() == "absolute":
+                value = math.exp(-1.5 + 3.0 * fraction)
+            else:
+                value = (-1.0 + 2.0 * fraction) * (self._color_limit or 1e-9)
+            painter.setBrush(self._element_color(value))
+            painter.drawRect(QRectF(
+                legend_x + legend_w * index / steps,
+                legend_y,
+                legend_w / steps + 0.5,
+                legend_h,
+            ))
+        painter.setPen(QColor(C["text_lo"]))
+        painter.setFont(QFont("Arial", 7 if compact else 8))
+        left_label = "σ−" if self._effective_display_mode() == "absolute" else "−"
+        right_label = "σ+" if self._effective_display_mode() == "absolute" else "+"
+        painter.drawText(QRectF(legend_x - 24, legend_y - 5, 22, 14), Qt.AlignRight, left_label)
+        painter.drawText(
+            QRectF(legend_x + legend_w + 2, legend_y - 5, 22, 14), Qt.AlignLeft, right_label
+        )
