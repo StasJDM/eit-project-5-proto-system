@@ -537,11 +537,14 @@ def _date(data: dict[str, Any], key: str) -> date | None:
 def _diagnosis_data(value: Diagnosis | None) -> dict[str, str] | None:
     if value is None:
         return None
-    return {
+    result = {
         "code": value.code,
         "title": value.title,
         "classification": value.classification,
     }
+    if value.title_ru is not None:
+        result["title_ru"] = value.title_ru
+    return result
 
 
 def _diagnosis(value: Any) -> Diagnosis | None:
@@ -555,6 +558,7 @@ def _diagnosis(value: Any) -> Diagnosis | None:
         # Patient payloads written before the configurable catalogue feature
         # contained only ICD-11 diagnoses.
         classification=value.get("classification", "ICD-11"),
+        title_ru=value.get("title_ru"),
     )
 
 

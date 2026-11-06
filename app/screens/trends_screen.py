@@ -71,6 +71,20 @@ _LEFT_CH   = [
 _REGIONAL_ROW_WEIGHTS = [2, 1, 1, 1, 1]
 
 
+def _regional_channels(side: str, roi_count: int) -> list[tuple[str, str]]:
+    bands = roi_count // 2
+    start = 0 if side == "R" else bands
+    colors = AERATION_ROI_R if side == "R" else AERATION_ROI_L
+    aggregate = AERATION_COLOR_R if side == "R" else AERATION_COLOR_L
+    return [
+        (side, aggregate),
+        *(
+            (f"ROI_{start + index + 1}", colors[index % len(colors)])
+            for index in range(bands)
+        ),
+    ]
+
+
 # ── Mock helpers ──────────────────────────────────────────────────────────────
 
 def _empty_bars(n: int = BREATHS_IN_WINDOW) -> np.ndarray:
@@ -620,8 +634,9 @@ class _RegionalPage(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(4)
-        self.left  = _LeftPanel(channels, channel_weights=_REGIONAL_ROW_WEIGHTS)
-        self.right = _RightPanel(channels, row_weights=_REGIONAL_ROW_WEIGHTS)
+        weights = [2, *([1] * (len(channels) - 1))]
+        self.left  = _LeftPanel(channels, channel_weights=weights)
+        self.right = _RightPanel(channels, row_weights=weights)
         lay.addWidget(self.left,  stretch=_LEFT_STRETCH)
         lay.addWidget(_vsep())
         lay.addWidget(self.right, stretch=_RIGHT_STRETCH)
@@ -637,6 +652,7 @@ class _RegionalTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._side = "R"
+        self._roi_count = 8
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -661,8 +677,8 @@ class _RegionalTab(QWidget):
         outer.addWidget(_hsep())
 
         self.stack = QStackedWidget()
-        self.page_r = _RegionalPage(_RIGHT_CH)
-        self.page_l = _RegionalPage(_LEFT_CH)
+        self.page_r = _RegionalPage(_regional_channels("R", self._roi_count))
+        self.page_l = _RegionalPage(_regional_channels("L", self._roi_count))
         self.stack.addWidget(self.page_r)
         self.stack.addWidget(self.page_l)
         outer.addWidget(self.stack, stretch=1)
@@ -692,10 +708,27 @@ class _RegionalTab(QWidget):
 
     def refresh(self, waves: dict):
         rois = waves["rois"]
-        r_data = [waves.get("r", np.sum(rois[:4], axis=0)), *rois[:4]]
-        l_data = [waves.get("l", np.sum(rois[4:], axis=0)), *rois[4:]]
+        roi_count = len(rois)
+        if roi_count >= 2 and roi_count % 2 == 0 and roi_count != self._roi_count:
+            self._set_roi_count(roi_count)
+        bands = self._roi_count // 2
+        r_data = [waves.get("r", np.sum(rois[:bands], axis=0)), *rois[:bands]]
+        l_data = [waves.get("l", np.sum(rois[bands:], axis=0)), *rois[bands:]]
         self.page_r.refresh(r_data)
         self.page_l.refresh(l_data)
+
+    def _set_roi_count(self, roi_count: int) -> None:
+        self._roi_count = roi_count
+        old_r, old_l = self.page_r, self.page_l
+        self.page_r = _RegionalPage(_regional_channels("R", roi_count))
+        self.page_l = _RegionalPage(_regional_channels("L", roi_count))
+        self.stack.removeWidget(old_r)
+        self.stack.removeWidget(old_l)
+        old_r.deleteLater()
+        old_l.deleteLater()
+        self.stack.addWidget(self.page_r)
+        self.stack.addWidget(self.page_l)
+        self.stack.setCurrentIndex(0 if self._side == "R" else 1)
 
     def retranslate(self):
         self.btn_r.setText(t("trends_right_short"))
@@ -1119,6 +1152,7 @@ class TrendsScreen(QWidget):
                 )
                 for point in points
             ], dtype=float)
+        roi_count = max((len(point.roi_values) for point in persisted), default=8)
         waves = {
             "time": np.asarray([
                 point.position_seconds if point is not None else (
@@ -1132,11 +1166,13 @@ class TrendsScreen(QWidget):
             "rois": [np.asarray([
                 (
                     point.roi_values[index]
-                    if point is not None and point.quality is DataQuality.VALID
+                    if point is not None
+                    and index < len(point.roi_values)
+                    and point.quality is DataQuality.VALID
                     else np.nan
                 )
                 for point in points
-            ], dtype=float) for index in range(8)],
+            ], dtype=float) for index in range(roi_count)],
         }
         events = ()
         if self._event_repository is not None:

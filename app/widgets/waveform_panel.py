@@ -292,13 +292,15 @@ def _vsep():
 class _LungColumn:
     """Колонка регионарной аэрации: заголовок + суммарная + 4 ROI."""
 
-    __slots__ = ("widget", "hdr", "agg", "rois")
+    __slots__ = ("widget", "layout", "hdr", "agg", "rois", "section")
 
-    def __init__(self, widget, hdr, agg, rois):
+    def __init__(self, widget, layout, hdr, agg, rois, section):
         self.widget = widget
+        self.layout = layout
         self.hdr = hdr
         self.agg = agg
         self.rois = rois
+        self.section = section
 
 
 # ── Regional aeration panel (10 graphs) ──────────────────────────────────────
@@ -308,16 +310,18 @@ class RegionalWaveformPanel(QWidget):
 
     regional_order = ("L", "R")
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, roi_count: int = 8):
         super().__init__(parent)
+        self._roi_count = roi_count
         self.setStyleSheet(f"background-color:{C['bg_wave']};")
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 2, 0, 2)
         outer.setSpacing(0)
 
-        self._col_r = self._build_column("R", "wave_r_label", 0)
-        self._col_l = self._build_column("L", "wave_l_label", 4)
+        bands = roi_count // 2
+        self._col_r = self._build_column("R", "wave_r_label", 0, bands)
+        self._col_l = self._build_column("L", "wave_l_label", bands, bands)
 
         outer.addWidget(self._col_l.widget, stretch=1)
         outer.addWidget(_vsep())
@@ -325,7 +329,9 @@ class RegionalWaveformPanel(QWidget):
 
         i18n.language_changed.connect(self.retranslate)
 
-    def _build_column(self, section: str, i18n_key: str, roi_start: int) -> _LungColumn:
+    def _build_column(
+        self, section: str, i18n_key: str, roi_start: int, band_count: int
+    ) -> _LungColumn:
         w = QWidget()
         w.setStyleSheet("background:transparent;")
         lay = QVBoxLayout(w)
@@ -341,13 +347,40 @@ class RegionalWaveformPanel(QWidget):
 
         roi_colors = AERATION_ROI_R if section == "R" else AERATION_ROI_L
         rois: list[_WaveRow] = []
-        for i in range(4):
+        for i in range(band_count):
             idx = roi_start + i
-            row = _WaveRow(f"ROI_{idx + 1}", roi_colors[i], size="compact")
+            row = _WaveRow(
+                f"ROI_{idx + 1}", roi_colors[i % len(roi_colors)], size="compact"
+            )
             lay.addWidget(row, stretch=1)
             rois.append(row)
 
-        return _LungColumn(w, hdr, agg, rois)
+        return _LungColumn(w, lay, hdr, agg, rois, section)
+
+    def set_roi_count(self, roi_count: int) -> None:
+        if roi_count == self._roi_count:
+            return
+        self._roi_count = roi_count
+        bands = roi_count // 2
+        self._rebuild_column_rois(self._col_r, 0, bands)
+        self._rebuild_column_rois(self._col_l, bands, bands)
+
+    def _rebuild_column_rois(
+        self, column: _LungColumn, roi_start: int, band_count: int
+    ) -> None:
+        for row in column.rois:
+            column.layout.removeWidget(row)
+            row.deleteLater()
+        colors = AERATION_ROI_R if column.section == "R" else AERATION_ROI_L
+        column.rois = []
+        for index in range(band_count):
+            row = _WaveRow(
+                f"ROI_{roi_start + index + 1}",
+                colors[index % len(colors)],
+                size="compact",
+            )
+            column.layout.addWidget(row, stretch=1)
+            column.rois.append(row)
 
     def update_all(
         self,
@@ -358,8 +391,9 @@ class RegionalWaveformPanel(QWidget):
         trends: dict | None = None,
     ):
         rois = waves["rois"]
-        r_agg = np.mean(rois[:4], axis=0)
-        l_agg = np.mean(rois[4:], axis=0)
+        bands = self._roi_count // 2
+        r_agg = np.mean(rois[:bands], axis=0)
+        l_agg = np.mean(rois[bands:], axis=0)
 
         self._col_r.agg.update_data(r_agg)
         self._col_r.agg.update_pct(r_pct)
@@ -369,8 +403,8 @@ class RegionalWaveformPanel(QWidget):
             row.update_data(rois[i])
             row.update_pct(roi_pcts[i])
         for i, row in enumerate(self._col_l.rois):
-            row.update_data(rois[i + 4])
-            row.update_pct(roi_pcts[i + 4])
+            row.update_data(rois[i + bands])
+            row.update_pct(roi_pcts[i + bands])
 
         if trends:
             self._col_r.agg.update_trend(trends.get("r", 0.0))
@@ -379,7 +413,9 @@ class RegionalWaveformPanel(QWidget):
             for i, row in enumerate(self._col_r.rois):
                 row.update_trend(roi_tr[i] if i < len(roi_tr) else 0.0)
             for i, row in enumerate(self._col_l.rois):
-                row.update_trend(roi_tr[i + 4] if i + 4 < len(roi_tr) else 0.0)
+                row.update_trend(
+                    roi_tr[i + bands] if i + bands < len(roi_tr) else 0.0
+                )
 
     def retranslate(self):
         self._col_r.hdr.retranslate()
@@ -409,11 +445,14 @@ class WaveformPanel(QWidget):
         show_regional: bool = True,
         show_event_button: bool = True,
         expand_global: bool = False,
+        roi_count: int = 8,
         parent=None,
     ):
         super().__init__(parent)
         self._show_global = show_global
         self._show_regional = show_regional
+        self._roi_count = roi_count
+        self._regional_column_layouts: dict[str, QVBoxLayout] = {}
         # Главный экран: 9 каналов в ~740 px — компактные ROI + растяжение Σ LI.
         self._dense = show_global and show_regional and not expand_global
         self.setStyleSheet(f"background-color:{C['bg_wave']};")
@@ -458,7 +497,7 @@ class WaveformPanel(QWidget):
                 reg_lay.setSpacing(0)
 
                 for section, i18n_key, roi_start, agg_color, roi_colors in (
-                    ("L", "wave_l_label", 4, AERATION_COLOR_L, AERATION_ROI_L),
+                    ("L", "wave_l_label", roi_count // 2, AERATION_COLOR_L, AERATION_ROI_L),
                     ("R", "wave_r_label", 0, AERATION_COLOR_R, AERATION_ROI_R),
                 ):
                     col = QWidget()
@@ -466,6 +505,7 @@ class WaveformPanel(QWidget):
                     col_lay = QVBoxLayout(col)
                     col_lay.setContentsMargins(4, 2, 4, 2)
                     col_lay.setSpacing(1)
+                    self._regional_column_layouts[section] = col_lay
 
                     hdr = _SectionHeader(i18n_key, section, compact=True)
                     col_lay.addWidget(hdr)
@@ -483,10 +523,10 @@ class WaveformPanel(QWidget):
                         self.row_l_agg = agg
                         target = self.rows_l
 
-                    for i in range(4):
+                    for i in range(roi_count // 2):
                         idx = roi_start + i
                         row = _WaveRow(
-                            f"ROI_{idx + 1}", roi_colors[i],
+                            f"ROI_{idx + 1}", roi_colors[i % len(roi_colors)],
                             size="compact", expand=True,
                         )
                         col_lay.addWidget(row, stretch=_MAIN_ROI_STRETCH)
@@ -503,8 +543,12 @@ class WaveformPanel(QWidget):
                 outer.addWidget(self._hdr_l)
                 self.row_l_agg = _WaveRow("Σ L", AERATION_COLOR_L, size="medium")
                 outer.addWidget(self.row_l_agg)
-                for i in range(4):
-                    row = _WaveRow(f"ROI_{i+5}", AERATION_ROI_L[i], size=roi_size)
+                for i in range(roi_count // 2):
+                    row = _WaveRow(
+                        f"ROI_{i + roi_count // 2 + 1}",
+                        AERATION_ROI_L[i % len(AERATION_ROI_L)],
+                        size=roi_size,
+                    )
                     outer.addWidget(row)
                     self.rows_l.append(row)
                 outer.addWidget(_hsep())
@@ -513,8 +557,10 @@ class WaveformPanel(QWidget):
                 outer.addWidget(self._hdr_r)
                 self.row_r_agg = _WaveRow("Σ R", AERATION_COLOR_R, size="medium")
                 outer.addWidget(self.row_r_agg)
-                for i in range(4):
-                    row = _WaveRow(f"ROI_{i+1}", AERATION_ROI_R[i], size=roi_size)
+                for i in range(roi_count // 2):
+                    row = _WaveRow(
+                        f"ROI_{i+1}", AERATION_ROI_R[i % len(AERATION_ROI_R)], size=roi_size
+                    )
                     outer.addWidget(row)
                     self.rows_r.append(row)
 
@@ -537,6 +583,32 @@ class WaveformPanel(QWidget):
 
     # ── Public ────────────────────────────────────────────────────────────────
 
+    def set_roi_count(self, roi_count: int) -> None:
+        if roi_count == self._roi_count:
+            return
+        self._roi_count = roi_count
+        if not self._show_regional or not self._dense:
+            return
+        bands = roi_count // 2
+        for section, start, target, colors in (
+            ("L", bands, self.rows_l, AERATION_ROI_L),
+            ("R", 0, self.rows_r, AERATION_ROI_R),
+        ):
+            layout = self._regional_column_layouts[section]
+            for row in target:
+                layout.removeWidget(row)
+                row.deleteLater()
+            target.clear()
+            for index in range(bands):
+                row = _WaveRow(
+                    f"ROI_{start + index + 1}",
+                    colors[index % len(colors)],
+                    size="compact",
+                    expand=True,
+                )
+                layout.addWidget(row, stretch=_MAIN_ROI_STRETCH)
+                target.append(row)
+
     def update_all(
         self,
         waves: dict,
@@ -547,8 +619,9 @@ class WaveformPanel(QWidget):
         trends: dict | None = None,
     ):
         rois = waves["rois"]
-        r_agg = np.mean(rois[:4], axis=0)
-        l_agg = np.mean(rois[4:], axis=0)
+        bands = self._roi_count // 2
+        r_agg = np.mean(rois[:bands], axis=0)
+        l_agg = np.mean(rois[bands:], axis=0)
 
         if self.row_global is not None:
             self.row_global.update_data(waves["global"])
@@ -573,15 +646,17 @@ class WaveformPanel(QWidget):
             if trends:
                 self.row_l_agg.update_trend(trends.get("l", 0.0))
 
-        roi_tr = trends.get("rois", [0.0] * 8) if trends else [0.0] * 8
+        roi_tr = trends.get("rois", [0.0] * self._roi_count) if trends else [0.0] * self._roi_count
         for i, row in enumerate(self.rows_r):
             row.update_data(rois[i])
             row.update_pct(roi_pcts[i])
             row.update_trend(roi_tr[i] if i < len(roi_tr) else 0.0)
         for i, row in enumerate(self.rows_l):
-            row.update_data(rois[i + 4])
-            row.update_pct(roi_pcts[i + 4])
-            row.update_trend(roi_tr[i + 4] if i + 4 < len(roi_tr) else 0.0)
+            row.update_data(rois[i + bands])
+            row.update_pct(roi_pcts[i + bands])
+            row.update_trend(
+                roi_tr[i + bands] if i + bands < len(roi_tr) else 0.0
+            )
 
     def retranslate(self):
         if self._hdr_t is not None:

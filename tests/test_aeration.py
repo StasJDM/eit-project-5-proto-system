@@ -5,6 +5,7 @@ import numpy as np
 
 from app.application import (
     ALGORITHM_VERSION,
+    LEGACY_ALGORITHM_VERSION,
     AerationAlgorithmParameters,
     AerationProcessor,
     calculate_aeration_metrics,
@@ -29,6 +30,14 @@ def frame(sequence: int, value: float, *, quality=DataQuality.VALID) -> EITFrame
 
 
 class AerationCalculationTest(unittest.TestCase):
+    def test_derivative_detector_is_default_and_legacy_remains_versioned(self):
+        current = AerationAlgorithmParameters()
+        legacy = AerationAlgorithmParameters(peak_detection_method="legacy")
+
+        self.assertEqual(current.peak_detection_method, "derivative")
+        self.assertEqual(current.version, ALGORITHM_VERSION)
+        self.assertEqual(legacy.version, LEGACY_ALGORITHM_VERSION)
+
     def test_reference_signal_produces_expected_rr_tiv_and_regional_shares(self):
         fs = 25.0
         time = np.arange(0.0, 20.0, 1.0 / fs)
@@ -55,6 +64,29 @@ class AerationCalculationTest(unittest.TestCase):
             tuple(round(value, 6) for value in result.roi_percent),
             (20.0, 15.0, 10.0, 5.0, 20.0, 15.0, 10.0, 5.0),
         )
+
+    def test_derivative_detector_ignores_small_zero_crossing_jitter(self):
+        fs = 25.0
+        time = np.arange(0.0, 24.0, 1.0 / fs)
+        breathing = (
+            10.0
+            + 2.0 * np.sin(2.0 * np.pi * 0.25 * time)
+            + 0.04 * np.sin(2.0 * np.pi * 4.3 * time)
+            + 0.02 * np.sin(2.0 * np.pi * 7.1 * time)
+        )
+        weights = (4, 3, 2, 1, 4, 3, 2, 1)
+        rois = [breathing * weight / sum(weights) for weight in weights]
+
+        result = calculate_aeration_metrics(
+            breathing,
+            rois,
+            AerationAlgorithmParameters(sample_rate_hz=fs),
+        )
+
+        self.assertEqual(result.algorithm_version, ALGORITHM_VERSION)
+        self.assertAlmostEqual(result.respiratory_rate_bpm, 15.0, places=6)
+        self.assertAlmostEqual(result.tvi_au, 4.0, delta=0.15)
+        self.assertEqual(result.complete_cycle_count, 5)
 
     def test_insufficient_and_flat_signals_are_explicitly_unavailable(self):
         params = AerationAlgorithmParameters(sample_rate_hz=25.0)

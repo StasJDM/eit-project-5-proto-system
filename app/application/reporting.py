@@ -224,8 +224,12 @@ def _summary(trends) -> dict[str, Any]:
     right = average("right_value")
     left = average("left_value")
     roi = []
-    for index in range(8):
-        values = [item.roi_values[index] for item in trends if item.roi_values[index] is not None]
+    roi_count = max((len(item.roi_values) for item in trends), default=0)
+    for index in range(roi_count):
+        values = [
+            item.roi_values[index] for item in trends
+            if index < len(item.roi_values) and item.roi_values[index] is not None
+        ]
         roi.append(mean(values) if values else None)
     return {
         "interval_count": len(trends),

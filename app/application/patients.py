@@ -15,6 +15,7 @@ from ..domain import Diagnosis, Patient, VentilationDetails, utc_now
 EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")
 MEDICAL_RECORD_RE = re.compile(r"^[\w./-]{1,64}$", re.UNICODE)
 NAME_RE = re.compile(r"^[^\d\W][^\d]{0,63}$", re.UNICODE)
+AUTOMATIC_PATIENT_EXTERNAL_ID = "AUTO-PATIENT"
 
 
 class PatientValidationError(ValueError):
@@ -63,6 +64,28 @@ class PatientService:
             if self.repository.find_by_external_id(candidate) is None:
                 return candidate
         raise RuntimeError("could not allocate a unique patient ID")
+
+    def ensure_automatic_patient(self) -> Patient:
+        """Return the stable placeholder used for monitoring without a card."""
+        existing = self.repository.find_by_external_id(AUTOMATIC_PATIENT_EXTERNAL_ID)
+        if existing is not None:
+            return existing
+        patient = Patient(
+            external_id=AUTOMATIC_PATIENT_EXTERNAL_ID,
+            medical_record_number=AUTOMATIC_PATIENT_EXTERNAL_ID,
+            family_name="AUTO",
+            given_name="PATIENT",
+        )
+        try:
+            self.repository.save(patient)
+        except sqlite3.IntegrityError:
+            # Another caller may have created the same system card between the
+            # lookup and insert. Reuse it instead of creating duplicates.
+            existing = self.repository.find_by_external_id(AUTOMATIC_PATIENT_EXTERNAL_ID)
+            if existing is not None:
+                return existing
+            raise
+        return patient
 
     def search(self, query: str, *, limit: int = 50):
         return self.repository.search(query, limit=limit)

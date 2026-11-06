@@ -264,8 +264,12 @@ def _metric_rows(study_id: UUID, trends) -> list[dict[str, Any]]:
     for attr in ("global_value", "right_value", "left_value", "respiratory_rate_bpm"):
         items = values(attr)
         result[f"{attr}_mean"] = sum(items) / len(items) if items else None
-    for index in range(8):
-        items = [item.roi_values[index] for item in interval if item.roi_values[index] is not None]
+    roi_count = max((len(item.roi_values) for item in interval), default=0)
+    for index in range(roi_count):
+        items = [
+            item.roi_values[index] for item in interval
+            if index < len(item.roi_values) and item.roi_values[index] is not None
+        ]
         result[f"roi_{index + 1}_mean"] = sum(items) / len(items) if items else None
     result["algorithm_versions"] = sorted({item.algorithm_version for item in interval})
     return [result]

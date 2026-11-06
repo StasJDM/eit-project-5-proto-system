@@ -63,17 +63,20 @@ class ReportStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class Diagnosis:
-    """A diagnosis selected from the local ICD-11 catalogue."""
+    """A diagnosis selected from a local bilingual ICD catalogue."""
 
     code: str
-    title: str
+    title: str  # canonical English title; legacy records may contain Russian
     classification: str = "ICD-11"
+    title_ru: str | None = None
 
     def __post_init__(self) -> None:
         if not self.code.strip():
             raise ValueError("diagnosis code must not be blank")
         if not self.title.strip():
             raise ValueError("diagnosis title must not be blank")
+        if self.title_ru is not None and not self.title_ru.strip():
+            raise ValueError("Russian diagnosis title must not be blank")
         if self.classification not in {"ICD-10", "ICD-11"}:
             raise ValueError("diagnosis classification must be ICD-10 or ICD-11")
 
@@ -509,8 +512,8 @@ class TrendAggregate:
             raise ValueError("aggregation_kind must be interval or breath_cycle")
         if self.sample_count <= 0:
             raise ValueError("sample_count must be positive")
-        if len(self.roi_values) != ROI_COUNT:
-            raise ValueError(f"roi_values must contain exactly {ROI_COUNT} values")
+        if not 2 <= len(self.roi_values) <= 20 or len(self.roi_values) % 2:
+            raise ValueError("roi_values must contain an even number of values from 2 to 20")
         for name in ("global_value", "right_value", "left_value"):
             _validate_optional_number(getattr(self, name), name)
         _validate_optional_number(

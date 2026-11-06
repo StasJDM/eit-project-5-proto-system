@@ -841,6 +841,36 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "分析",
         "vi": "PHÂN TÍCH",
     },
+    "analysis_classifier_experimental": {
+        "ru": "экспериментальная модель",
+        "en": "experimental model",
+        "zh": "实验模型",
+        "vi": "mô hình thử nghiệm",
+    },
+    "analysis_reason_experimental_model_not_clinically_validated": {
+        "ru": "Модель breathclf 0.0.4 интегрирована для исследовательского использования и не имеет подтверждённого статуса клинической валидации.",
+        "en": "The integrated breathclf 0.0.4 model is for research use and has no confirmed clinical validation status.",
+        "zh": "集成的 breathclf 0.0.4 模型仅供研究使用，尚无确认的临床验证状态。",
+        "vi": "Mô hình breathclf 0.0.4 tích hợp chỉ dùng cho nghiên cứu và chưa có trạng thái xác nhận lâm sàng.",
+    },
+    "analysis_reason_breathclf_model_unavailable": {
+        "ru": "Файл модели breathclf недоступен или несовместим.",
+        "en": "The breathclf model file is unavailable or incompatible.",
+        "zh": "breathclf 模型文件不可用或不兼容。",
+        "vi": "Tệp mô hình breathclf không khả dụng hoặc không tương thích.",
+    },
+    "analysis_reason_breathclf_insufficient_signal": {
+        "ru": "Для классификации требуется непрерывная глобальная кривая длительностью 60 секунд.",
+        "en": "Classification requires a continuous 60-second global waveform.",
+        "zh": "分类需要连续 60 秒的全局波形。",
+        "vi": "Phân loại cần dạng sóng toàn thể liên tục trong 60 giây.",
+    },
+    "analysis_reason_breathclf_inference_failed": {
+        "ru": "Модель не смогла обработать текущую кривую.",
+        "en": "The model could not process the current waveform.",
+        "zh": "模型无法处理当前波形。",
+        "vi": "Mô hình không thể xử lý dạng sóng hiện tại.",
+    },
     "screen_trends": {
         "ru": "ТРЕНДЫ",
         "en": "TRENDS",
@@ -1056,6 +1086,63 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Change language",
         "zh": "更改语言",
         "vi": "Thay đổi ngôn ngữ",
+    },
+    "sys_tab_information": {
+        "ru": "Системная информация", "en": "System information",
+        "zh": "系统信息", "vi": "Thông tin hệ thống",
+    },
+    "sys_tab_engineering": {
+        "ru": "Инженерный режим", "en": "Engineering mode",
+        "zh": "工程模式", "vi": "Chế độ kỹ thuật",
+    },
+    "sys_engineering_modes": {
+        "ru": "Режимы работы", "en": "Operating modes",
+        "zh": "工作模式", "vi": "Chế độ vận hành",
+    },
+    "sys_mode_adult": {
+        "ru": "Взрослый", "en": "Adult", "zh": "成人", "vi": "Người lớn",
+    },
+    "sys_mode_infant": {
+        "ru": "Младенец", "en": "Infant", "zh": "婴儿", "vi": "Trẻ sơ sinh",
+    },
+    "sys_mode_ventilation": {
+        "ru": "ИВЛ", "en": "Mechanical ventilation", "zh": "机械通气", "vi": "Thở máy",
+    },
+    "sys_engineering_roi_count": {
+        "ru": "Количество областей интереса (ROI):",
+        "en": "Number of regions of interest (ROI):",
+        "zh": "感兴趣区域 (ROI) 数量：",
+        "vi": "Số vùng quan tâm (ROI):",
+    },
+    "sys_engineering_peak_detector": {
+        "ru": "Алгоритм выделения вдоха и выдоха:",
+        "en": "Inspiration/expiration detector:",
+        "zh": "吸气/呼气检测算法：",
+        "vi": "Thuật toán phát hiện hít vào/thở ra:",
+    },
+    "sys_peak_detector_derivative": {
+        "ru": "По производной (новый, по умолчанию)",
+        "en": "Derivative-based (new, default)",
+        "zh": "基于导数（新，默认）",
+        "vi": "Dựa trên đạo hàm (mới, mặc định)",
+    },
+    "sys_peak_detector_legacy": {
+        "ru": "По локальным экстремумам (legacy)",
+        "en": "Local extrema (legacy)",
+        "zh": "局部极值（旧版）",
+        "vi": "Cực trị cục bộ (phiên bản cũ)",
+    },
+    "sys_engineering_hint": {
+        "ru": "Можно выбрать от 2 до 20 ROI с шагом 2 и алгоритм выделения дыхательных фаз. Изменения применяются к последующим расчётам; должен оставаться включён хотя бы один режим работы.",
+        "en": "Select 2 to 20 ROIs in steps of 2 and the respiratory phase detector. Changes apply to subsequent calculations; at least one operating mode must remain enabled.",
+        "zh": "可选择 2 至 20 个 ROI（步长为 2）和呼吸相位检测算法。更改将应用于后续计算；必须至少启用一种工作模式。",
+        "vi": "Chọn từ 2 đến 20 ROI với bước 2 và thuật toán phát hiện pha hô hấp. Thay đổi áp dụng cho các phép tính tiếp theo; phải bật ít nhất một chế độ vận hành.",
+    },
+    "sys_engineering_apply": {
+        "ru": "Применить", "en": "Apply", "zh": "应用", "vi": "Áp dụng",
+    },
+    "sys_engineering_saved": {
+        "ru": "Сохранено", "en": "Saved", "zh": "已保存", "vi": "Đã lưu",
     },
     "sys_version": {
         "ru": "Версия ПО:",

@@ -58,7 +58,7 @@ class UiContractTest(unittest.TestCase):
         finally:
             screen.close()
 
-    def test_unavailable_metrics_are_rendered_as_dash_instead_of_zero(self):
+    def test_unavailable_metrics_are_rendered_as_dash_without_obstructive_tooltip(self):
         panel = LeftPanel()
         try:
             panel.update_params(MonitoringSnapshot())
@@ -67,8 +67,15 @@ class UiContractTest(unittest.TestCase):
                 panel.box_vd, panel.box_tvi, panel.box_eeli, panel.box_eili,
             ):
                 self.assertEqual(box._lbl_val.text(), "—")
-                self.assertEqual(box.toolTip(), "Причина: недостаточно данных")
-                self.assertNotIn("insufficient_data", box.toolTip())
+                self.assertEqual(box.toolTip(), "")
+        finally:
+            panel.close()
+
+    def test_main_screen_start_button_keeps_explicit_green_style(self):
+        panel = LeftPanel()
+        try:
+            panel.sync_start(False)
+            self.assertIn("background-color: #2e7d32", panel.btn_start.styleSheet())
         finally:
             panel.close()
 
@@ -145,7 +152,42 @@ class UiContractTest(unittest.TestCase):
             ):
                 window._study_buttons[0].click()
             self.app.processEvents()
-            self.assertTrue(all(not button.isEnabled() for button in window._study_buttons))
+            self.assertTrue(all(button.isEnabled() for button in window._study_buttons))
+            self.assertTrue(all(button.text() == "▶  СТАРТ" for button in window._study_buttons))
+        finally:
+            window.close()
+
+    def test_main_start_automatically_links_placeholder_patient_and_study(self):
+        window = MainWindow()
+        try:
+            lifecycle = window._container.study_lifecycle
+            self.assertIsNone(lifecycle.selected_patient_id)
+            self.assertIsNone(lifecycle.current_study)
+            self.assertTrue(window._screens["main"].left.btn_start.isEnabled())
+
+            window._screens["main"].left.btn_start.click()
+            self.app.processEvents()
+
+            patient = window._container.repositories.patients.get(
+                lifecycle.selected_patient_id
+            )
+            self.assertEqual(patient.external_id, "AUTO-PATIENT")
+            self.assertEqual(lifecycle.current_study.patient_id, patient.id)
+            self.assertEqual(lifecycle.status.value, "running")
+            self.assertTrue(window._container.monitoring_controller.is_running)
+
+            with patch("app.main_window.QMessageBox.exec", return_value=QMessageBox.Yes):
+                window._screens["main"].left.btn_start.click()
+            self.app.processEvents()
+            self.assertTrue(window._screens["main"].left.btn_start.isEnabled())
+
+            window._screens["main"].left.btn_start.click()
+            self.app.processEvents()
+            self.assertEqual(lifecycle.status.value, "running")
+            self.assertEqual(
+                len(window._container.repositories.patients.search("AUTO-PATIENT")),
+                1,
+            )
         finally:
             window.close()
 

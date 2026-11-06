@@ -13,6 +13,10 @@ from .acquisition import (
 )
 from .aeration import (
     ALGORITHM_VERSION,
+    DERIVATIVE_PEAK_DETECTOR,
+    LEGACY_ALGORITHM_VERSION,
+    LEGACY_PEAK_DETECTOR,
+    PEAK_DETECTORS,
     AerationAlgorithmParameters,
     AerationProcessor,
     AerationResult,
@@ -42,6 +46,17 @@ from .patients import (
     full_years,
 )
 from .eit_settings import ACQUISITION_SETTINGS_KEY, EITSettingsService
+from .engineering_settings import (
+    DEFAULT_PEAK_DETECTION_METHOD,
+    DEFAULT_ROI_COUNT,
+    ENGINEERING_SETTINGS_KEY,
+    MAX_ROI_COUNT,
+    MIN_ROI_COUNT,
+    PEAK_DETECTION_METHODS,
+    WORK_MODES,
+    EngineeringSettings,
+    EngineeringSettingsService,
+)
 from .recording import StudyRecordingService
 from .playback import PlaybackSnapshot, StudyPlaybackError, StudyPlaybackService
 from .signal_quality import (
@@ -58,8 +73,15 @@ from .trends import (
 )
 from .breathing_classification import (
     BreathingClass, BreathingClassificationResult, BreathingClassificationService,
+    BreathingModelVisualization,
     ClassificationMetrics, LabeledBreathingSample, ManualBreathingAssessment,
     ValidatedBreathingClassifier,
+)
+from .breathclf_adapter import (
+    BREATHCLF_FORMAT_VERSION,
+    DEFAULT_MODEL_FILE,
+    BreathClfClassifier,
+    default_breath_model_path,
 )
 from .session_clock import (
     ELECTRODE_USAGE_SECONDS_SETTING, SessionClockService, SessionClockSnapshot,
@@ -80,6 +102,8 @@ from .icd11 import (
     ICD11_CATALOGUE,
     ICD11_RELEASE,
     ICD11_SOURCE_URL,
+    diagnosis_text,
+    diagnosis_title,
     resolve_diagnosis,
     resolve_icd11,
     search_diagnoses,
@@ -92,6 +116,10 @@ __all__ = [
     "AcquisitionPipeline",
     "AcquisitionSnapshot",
     "ALGORITHM_VERSION",
+    "DERIVATIVE_PEAK_DETECTOR",
+    "LEGACY_ALGORITHM_VERSION",
+    "LEGACY_PEAK_DETECTOR",
+    "PEAK_DETECTORS",
     "AerationAlgorithmParameters",
     "AerationProcessor",
     "AerationResult",
@@ -112,6 +140,15 @@ __all__ = [
     "PatientValidationError",
     "ACQUISITION_SETTINGS_KEY",
     "EITSettingsService",
+    "ENGINEERING_SETTINGS_KEY",
+    "WORK_MODES",
+    "MIN_ROI_COUNT",
+    "MAX_ROI_COUNT",
+    "DEFAULT_ROI_COUNT",
+    "DEFAULT_PEAK_DETECTION_METHOD",
+    "PEAK_DETECTION_METHODS",
+    "EngineeringSettings",
+    "EngineeringSettingsService",
     "full_years",
     "ICD11_CATALOGUE",
     "ICD11_RELEASE",
@@ -122,6 +159,8 @@ __all__ = [
     "DEFAULT_DIAGNOSIS_CLASSIFICATION",
     "DIAGNOSIS_CLASSIFICATION_SETTING",
     "DiagnosisCatalogService",
+    "diagnosis_text",
+    "diagnosis_title",
     "resolve_diagnosis",
     "search_diagnoses",
     "resolve_icd11",
@@ -160,6 +199,11 @@ __all__ = [
     "BreathingClass",
     "BreathingClassificationResult",
     "BreathingClassificationService",
+    "BreathingModelVisualization",
+    "BREATHCLF_FORMAT_VERSION",
+    "DEFAULT_MODEL_FILE",
+    "BreathClfClassifier",
+    "default_breath_model_path",
     "ClassificationMetrics",
     "LabeledBreathingSample",
     "ManualBreathingAssessment",

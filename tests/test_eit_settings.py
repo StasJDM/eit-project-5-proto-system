@@ -115,6 +115,15 @@ class EITSettingsTest(unittest.TestCase):
         finally:
             screen.close()
 
+    def test_protocol_hypothesis_dropdowns_are_hidden_from_operator(self):
+        screen = EITSettingsScreen(settings_service=self.service)
+        try:
+            self.assertTrue(screen._row_electrode_order.isHidden())
+            self.assertTrue(screen._row_measurement_sequence.isHidden())
+            self.assertEqual(screen._settings_from_controls(), self.service.current)
+        finally:
+            screen.close()
+
 
 if __name__ == "__main__":
     unittest.main()

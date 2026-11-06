@@ -88,6 +88,29 @@ TAB_BAR_SUB_FONT = FONT_TAB_SUB
 ACTION_BTN_HEIGHT = 60
 
 
+def start_button_style() -> str:
+    """Shared unmistakably green style for the available Start action."""
+    return f"""
+        QPushButton {{
+            background-color: {C['ok']};
+            color: white;
+            border: 1px solid #1b5e20;
+            border-radius: 4px;
+            font-size: {FONT_BTN_START}px;
+            font-weight: bold;
+            padding: 10px 20px;
+            min-height: 38px;
+        }}
+        QPushButton:hover {{ background-color: {C['ok_hover']}; }}
+        QPushButton:pressed {{ background-color: #1b5e20; }}
+        QPushButton:disabled {{
+            background-color: #254d32;
+            color: #9fb7a7;
+            border-color: #326541;
+        }}
+    """
+
+
 def yellow_btn_style() -> str:
     return f"""
         QPushButton {{

@@ -21,7 +21,8 @@ from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — регистрирует проекцию '3d'
 
 from ..application import (
-    BreathingClass, BreathingClassificationService, EventMarkerService, MonitoringData,
+    BreathingClass, BreathingClassificationService, BreathingModelVisualization,
+    EventMarkerService, MonitoringData,
 )
 from ..domain import utc_now
 from ..application.monitoring import DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, FS
@@ -424,6 +425,109 @@ def _build_avg_figure() -> Figure:
     return fig
 
 
+def _build_breathclf_pca_figure(data: BreathingModelVisualization) -> Figure:
+    """Render PCA diagnostics stored in the integrated breathclf model."""
+    scores = np.asarray(data.train_scores, dtype=float)
+    labels = np.asarray(data.train_labels, dtype=int)
+    n_classes = len(data.class_names)
+    fig = Figure(figsize=(7.6, 4.0), facecolor=_BG)
+
+    ax1 = fig.add_subplot(2, 2, 1)
+    variance = np.asarray(data.explained_variance_ratio, dtype=float)
+    components = np.arange(1, variance.size + 1)
+    ax1.plot(components, variance * 100.0, "o-", color="#ff9800", lw=1.4, ms=3)
+    ax1.plot(components, np.cumsum(variance) * 100.0, "s-", color="#00bcd4", lw=1.2, ms=3)
+    ax1.set_xlabel("Главные компоненты")
+    ax1.set_ylabel("Дисперсия, %")
+    _ax_style(ax1, "Информативность компонент модели")
+
+    ax2 = fig.add_subplot(2, 2, 2)
+    if scores.ndim == 2 and scores.shape[1] >= 2:
+        for index, name in enumerate(data.class_names):
+            mask = labels == index
+            ax2.scatter(
+                scores[mask, 0], scores[mask, 1],
+                color=_BT_COLORS[index % len(_BT_COLORS)], s=8, alpha=0.65,
+                label=name,
+            )
+        if data.current_score is not None and len(data.current_score) >= 2:
+            ax2.scatter(
+                data.current_score[0], data.current_score[1],
+                marker="*", s=120, color="white", edgecolor="#f44336",
+                linewidth=1.2, label="Текущая кривая", zorder=10,
+            )
+    ax2.legend(
+        fontsize=4.3, facecolor=_BG, labelcolor=_TXT, framealpha=0.55,
+        loc="best", ncol=2,
+    )
+    ax2.set_xlabel("PC1")
+    ax2.set_ylabel("PC2")
+    _ax_style(ax2, "Обучающая выборка и текущая кривая")
+
+    ax3 = fig.add_subplot(2, 2, 3)
+    centroids = []
+    if scores.ndim == 2 and scores.shape[1] >= 2:
+        for index in range(n_classes):
+            group = scores[labels == index, :2]
+            centroids.append(group.mean(axis=0) if len(group) else np.zeros(2))
+    matrix = np.asarray(centroids, dtype=float)
+    distances = (
+        np.linalg.norm(matrix[:, None, :] - matrix[None, :, :], axis=2)
+        if len(matrix) else np.zeros((n_classes, n_classes))
+    )
+    ax3.imshow(distances, aspect="auto", cmap="magma")
+    ax3.set_xticks(range(n_classes))
+    ax3.set_yticks(range(n_classes))
+    short = [name[:12] for name in data.class_names]
+    ax3.set_xticklabels(short, rotation=90, fontsize=4.5)
+    ax3.set_yticklabels(short, fontsize=4.5)
+    _ax_style(ax3, "Расстояния между центрами классов")
+
+    ax4 = fig.add_subplot(2, 2, 4, projection="3d")
+    ax4.set_facecolor(_AX)
+    ax4.xaxis.pane.fill = ax4.yaxis.pane.fill = ax4.zaxis.pane.fill = False
+    ax4.tick_params(colors=_DIM, labelsize=5)
+    ax4.set_title("Пространство PC1–PC3", fontsize=7, color=_TXT)
+    if scores.ndim == 2 and scores.shape[1] >= 3:
+        for index in range(n_classes):
+            mask = labels == index
+            ax4.scatter(
+                scores[mask, 0], scores[mask, 1], scores[mask, 2],
+                color=_BT_COLORS[index % len(_BT_COLORS)], s=6, alpha=0.65,
+            )
+        if data.current_score is not None and len(data.current_score) >= 3:
+            ax4.scatter(
+                data.current_score[0], data.current_score[1], data.current_score[2],
+                marker="*", s=110, color="white", edgecolor="#f44336",
+            )
+    ax4.view_init(elev=20, azim=30)
+    fig.tight_layout(pad=0.8)
+    return fig
+
+
+def _build_breathclf_templates_figure(data: BreathingModelVisualization) -> Figure:
+    """Render the actual class templates embedded in the model bundle."""
+    templates = np.asarray(data.templates, dtype=float)
+    fig = Figure(figsize=(7.6, 4.0), facecolor=_BG)
+    count = min(len(data.class_names), templates.shape[0] if templates.ndim == 2 else 0)
+    for index in range(count):
+        ax = fig.add_subplot(3, 4, index + 1)
+        values = templates[index]
+        time_values = np.arange(values.size, dtype=float) / data.sample_rate_hz
+        color = _BT_COLORS[index % len(_BT_COLORS)]
+        ax.fill_between(time_values, values, 0.0, color=color, alpha=0.25)
+        ax.plot(time_values, values, color=color, lw=1.1)
+        ax.set_title(data.class_names[index][:22], fontsize=6.3, color=_TXT, pad=2)
+        _ax_style(ax)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    for index in range(count, 12):
+        unused = fig.add_subplot(3, 4, index + 1)
+        unused.set_visible(False)
+    fig.tight_layout(pad=0.6)
+    return fig
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Вкладка 2: Аэрация ГЛОБАЛЬНАЯ
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -562,6 +666,11 @@ class _GlobalLeftPanel(QWidget):
         )
         params = getattr(snap, "algorithm_parameters", None)
         if params is not None:
+            detector_key = (
+                "sys_peak_detector_legacy"
+                if params.peak_detection_method == "legacy"
+                else "sys_peak_detector_derivative"
+            )
             self._analysis_status.setToolTip(
                 f"{t('analysis_param_sample_rate')}: "
                 f"{params.sample_rate_hz:g} {t('analysis_unit_hz')}; "
@@ -569,6 +678,7 @@ class _GlobalLeftPanel(QWidget):
                 f"{t('analysis_param_min_cycles')}: {params.minimum_complete_cycles}; "
                 f"{t('analysis_param_rr_range')}: "
                 f"{params.minimum_rr_bpm:g}–{params.maximum_rr_bpm:g} {t('wave_rr_unit')}; "
+                f"{t('sys_engineering_peak_detector')} {t(detector_key)}; "
                 f"{t('ui_reason_label')}: "
                 f"{quality_reason_text(getattr(snap, 'quality_reason', None))}"
             )
@@ -644,7 +754,7 @@ class GlobalTab(QWidget):
 class RegionalTab(QWidget):
     """Вкладка «Аэрация РЕГИОНАРНАЯ»."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, roi_count: int = 8):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -683,7 +793,7 @@ class RegionalTab(QWidget):
         root.addWidget(upper)
         root.addWidget(_hsep())
 
-        self._waves = RegionalWaveformPanel()
+        self._waves = RegionalWaveformPanel(roi_count=roi_count)
         root.addWidget(self._waves, stretch=1)
 
         # ── Нижняя панель ─────────────────────────────────────────────────────
@@ -692,6 +802,9 @@ class RegionalTab(QWidget):
 
         self.btn_start = self._bar.btn_start
         self.btn_event = self._bar.btn_event
+
+    def set_roi_count(self, roi_count: int) -> None:
+        self._waves.set_roi_count(roi_count)
 
     def sync_start(self, running: bool):
         self._bar.sync_start(running)
@@ -831,6 +944,8 @@ class PathologyTab(QWidget):
         super().__init__(parent)
         self._classification_service = classification_service
         self._last_result = None
+        self._model_visualization_signature: str | None = None
+        self._model_visualization_has_current = False
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -960,7 +1075,44 @@ class PathologyTab(QWidget):
             }
             detected = t(keys[result.breathing_class])
             detail = f" · {result.confidence * 100:.0f}% · {result.algorithm_version}"
+            if result.reason == "experimental_model_not_clinically_validated":
+                detail += f" · {t('analysis_classifier_experimental')}"
+            self._type_lbl.setToolTip(
+                t(f"analysis_reason_{result.reason}") if result.reason else ""
+            )
+            if (
+                self._model_visualization_signature is None
+                or not self._model_visualization_has_current
+            ):
+                visualization = service.visualization(values, FS)
+                if visualization is not None:
+                    self._apply_model_visualization(visualization)
         self._type_lbl.setText(f"{t('analysis_current_type')}: {detected}{detail}")
+
+    def _apply_model_visualization(
+        self, visualization: BreathingModelVisualization
+    ) -> None:
+        has_current = visualization.current_score is not None
+        if (
+            visualization.signature == self._model_visualization_signature
+            and (self._model_visualization_has_current or not has_current)
+        ):
+            return
+        selected = self._sub_stack.currentIndex()
+        old_pca, old_avg = self._pca_canvas, self._avg_canvas
+        self._sub_stack.removeWidget(old_pca)
+        self._sub_stack.removeWidget(old_avg)
+        old_pca.deleteLater()
+        old_avg.deleteLater()
+        self._pca_canvas = FigureCanvas(_build_breathclf_pca_figure(visualization))
+        self._avg_canvas = FigureCanvas(_build_breathclf_templates_figure(visualization))
+        for canvas in (self._pca_canvas, self._avg_canvas):
+            canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._sub_stack.addWidget(self._pca_canvas)
+        self._sub_stack.addWidget(self._avg_canvas)
+        self._sub_stack.setCurrentIndex(selected)
+        self._model_visualization_signature = visualization.signature
+        self._model_visualization_has_current = has_current
 
     def _set_manual_assessment(self, index: int):
         if self._classification_service is None:
@@ -1043,6 +1195,7 @@ class AnalysisScreen(QWidget):
         *,
         marker_service: EventMarkerService | None = None,
         classification_service: BreathingClassificationService | None = None,
+        engineering_settings=None,
     ):
         super().__init__(parent)
 
@@ -1082,7 +1235,13 @@ class AnalysisScreen(QWidget):
 
         self._path_tab   = PathologyTab(classification_service)
         self._global_tab = GlobalTab()
-        self._reg_tab    = RegionalTab()
+        self._reg_tab = RegionalTab(
+            roi_count=(engineering_settings.current.roi_count if engineering_settings else 8)
+        )
+        if engineering_settings is not None:
+            self._unsubscribe_engineering = engineering_settings.subscribe(
+                lambda settings: self._reg_tab.set_roi_count(settings.roi_count)
+            )
 
         self._stack.addWidget(self._path_tab)
         self._stack.addWidget(self._reg_tab)

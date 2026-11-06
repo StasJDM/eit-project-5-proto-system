@@ -15,13 +15,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
-from ..application import EventMarkerService, MonitoringData, MonitoringView
+from ..application import (
+    EngineeringSettingsService, EventMarkerService, MonitoringData, MonitoringView,
+)
 from ..domain import DataQuality
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounterPair
 from ..widgets.lung_viz import LungVizWidget
 from ..widgets.waveform_panel import WaveformPanel
-from ..styles import C, FONT_SMALL, FONT_LABEL, FONT_VALUE
+from ..styles import C, FONT_SMALL, FONT_LABEL, FONT_VALUE, start_button_style
 from ..i18n import t, i18n
 from ..ui_text import quality_reason_text
 
@@ -85,9 +87,10 @@ class _ParamBox(QFrame):
             self._lbl_val.setText(f"{v:.1f}")
         else:
             self._lbl_val.setText(str(v))
-        self.setToolTip(
-            f"{t('ui_reason_label')}: {quality_reason_text(reason)}" if reason else ""
-        )
+        # Карточки обновляются часто, поэтому длинная системная подсказка может
+        # неожиданно закрыть графики. Причина качества остаётся видимой в
+        # отдельном индикаторе над монитором.
+        self.setToolTip("")
 
 
 # ── Left panel ────────────────────────────────────────────────────────────────
@@ -185,7 +188,7 @@ class LeftPanel(QWidget):
             """)
         else:
             self.btn_start.setText(t("btn_start"))
-            self.btn_start.setStyleSheet("")   # revert to QSS #btn_start
+            self.btn_start.setStyleSheet(start_button_style())
 
     def retranslate(self):
         self.counters.retranslate()
@@ -229,10 +232,12 @@ class MainScreen(QWidget):
         *,
         display_window_sec: float = 60.0,
         marker_service: EventMarkerService | None = None,
+        engineering_settings: EngineeringSettingsService | None = None,
     ):
         super().__init__(parent)
         self._monitoring = monitoring
         self._marker_service = marker_service
+        self._engineering_settings = engineering_settings
         if display_window_sec <= 0:
             raise ValueError("display_window_sec must be positive")
         self._display_window_sec = float(display_window_sec)
@@ -254,7 +259,13 @@ class MainScreen(QWidget):
         root.addWidget(body, stretch=1)
 
         self.left    = LeftPanel()
-        self.waves   = WaveformPanel()
+        self.waves = WaveformPanel(
+            roi_count=(engineering_settings.current.roi_count if engineering_settings else 8)
+        )
+        if engineering_settings is not None:
+            self._unsubscribe_engineering = engineering_settings.subscribe(
+                lambda settings: self.waves.set_roi_count(settings.roi_count)
+            )
 
         lay.addWidget(self.left)
         lay.addWidget(self.waves, stretch=1)

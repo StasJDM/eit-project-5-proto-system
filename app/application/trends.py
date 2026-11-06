@@ -129,9 +129,13 @@ class TrendService:
         if not frames or study is None or session is None or session.started_at_utc is None:
             return
         snap = self._monitoring.snapshot
+        waves = self._monitoring.get_waveforms(90.0)
+        regional = [values[-len(frames):] for values in waves["rois"]]
         roi_values = tuple(
-            median(frame.roi_impedance[index] for frame in frames) for index in range(8)
+            median(float(value) for value in values) if len(values) else None
+            for values in regional
         )
+        bands = len(roi_values) // 2
         qualities = {frame.quality for frame in frames}
         quality = (
             DataQuality.UNAVAILABLE if DataQuality.UNAVAILABLE in qualities else
@@ -149,8 +153,14 @@ class TrendService:
             aggregation_kind=kind,
             sample_count=len(frames),
             global_value=median(frame.global_impedance for frame in frames),
-            right_value=median(sum(frame.roi_impedance[:4]) for frame in frames),
-            left_value=median(sum(frame.roi_impedance[4:]) for frame in frames),
+            right_value=(
+                median(float(value) for value in sum(regional[:bands]))
+                if regional and len(regional[0]) else None
+            ),
+            left_value=(
+                median(float(value) for value in sum(regional[bands:]))
+                if regional and len(regional[0]) else None
+            ),
             roi_values=roi_values,
             respiratory_rate_bpm=snap.rr,
             quality=quality,

@@ -136,7 +136,31 @@ class PatientServiceTest(unittest.TestCase):
         }
         for title, code in expected.items():
             with self.subTest(title=title):
-                self.assertEqual(search_icd11(title)[0], Diagnosis(code, title))
+                diagnosis = search_icd11(title)[0]
+                self.assertEqual(diagnosis.code, code)
+                self.assertEqual(diagnosis.title, title)
+
+    def test_full_catalogues_search_russian_and_english_titles(self):
+        self.assertGreater(len(search_diagnoses("", "ICD-10", limit=20_000)), 14_000)
+        self.assertGreater(len(search_diagnoses("", "ICD-11", limit=40_000)), 35_000)
+
+        icd10_ru = next(
+            item for item in search_diagnoses("пневмония неуточненная", "ICD-10")
+            if item.code == "J18.9"
+        )
+        icd10_en = next(
+            item for item in search_diagnoses("pneumonia, unspecified", "ICD-10")
+            if item.code == "J18.9"
+        )
+        self.assertEqual(icd10_ru.code, "J18.9")
+        self.assertEqual(icd10_en.code, "J18.9")
+        self.assertEqual(icd10_ru.title_ru, "Пневмония неуточненная")
+
+        icd11_ru = search_diagnoses("холера", "ICD-11")[0]
+        icd11_en = search_diagnoses("cholera", "ICD-11")[0]
+        self.assertEqual(icd11_ru.code, "1A00")
+        self.assertEqual(icd11_en.code, "1A00")
+        self.assertEqual(icd11_ru.title_ru, "Холера")
 
     def test_icd_10_is_default_and_catalogue_choice_persists(self):
         event_bus = EventBus()
@@ -219,6 +243,23 @@ class PatientScreenContractTest(unittest.TestCase):
             self.assertIsInstance(screen._e_chest, QDoubleSpinBox)
             self.assertFalse(screen.has_unsaved_changes)
         finally:
+            screen.close()
+
+    def test_patient_diagnosis_title_follows_interface_language(self):
+        screen = PatientScreen()
+        previous_language = i18n.lang
+        diagnosis = search_diagnoses("J18.9", "ICD-10")[0]
+        try:
+            screen._main_diagnosis = diagnosis
+            i18n.set_language("ru")
+            screen.retranslate()
+            self.assertEqual(screen._e_main_diag.text(), "J18.9 — Пневмония неуточненная")
+
+            i18n.set_language("en")
+            screen.retranslate()
+            self.assertEqual(screen._e_main_diag.text(), "J18.9 — Pneumonia, unspecified")
+        finally:
+            i18n.set_language(previous_language)
             screen.close()
 
     def test_task_7_marks_required_patient_fields_with_red_asterisks(self):

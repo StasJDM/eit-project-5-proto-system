@@ -58,7 +58,7 @@ class MonitoringSnapshot:
     roi_trends: tuple[float, ...] = field(default_factory=lambda: (0.0,) * 8)
     quality: DataQuality = DataQuality.UNAVAILABLE
     quality_reason: str | None = "insufficient_data"
-    algorithm_version: str = "eit-aeration-mvp-1.0.0"
+    algorithm_version: str = "eit-aeration-derivative-2.0.0"
     metric_statuses: tuple[tuple[str, MetricAvailability], ...] = ()
     stream_state: str = "empty"
     analysis_window_seconds: float = 30.0
@@ -108,14 +108,22 @@ class MonitoringService:
         *,
         settings: AcquisitionSettings | None = None,
         buffer_seconds: int = 90,
+        roi_count: int = 8,
+        peak_detection_method: str = "derivative",
     ) -> None:
         self._source = source
         self._event_bus = event_bus
         self._settings = settings or AcquisitionSettings()
         self._buffer_seconds = buffer_seconds
+        self._roi_count = roi_count
+        self._peak_detection_method = peak_detection_method
         capacity = max(1, int(buffer_seconds * self._settings.sample_rate_hz))
         self._aeration = AerationProcessor(
-            AerationAlgorithmParameters(sample_rate_hz=self._settings.sample_rate_hz),
+            AerationAlgorithmParameters(
+                sample_rate_hz=self._settings.sample_rate_hz,
+                roi_count=self._roi_count,
+                peak_detection_method=self._peak_detection_method,
+            ),
             capacity=capacity,
         )
         self._raw_reconstructor = RawFrameReconstructor(self._settings)
@@ -141,6 +149,10 @@ class MonitoringService:
     @property
     def read_only(self) -> bool:
         return self._mode is MonitoringMode.PLAYBACK
+
+    @property
+    def roi_count(self) -> int:
+        return self._roi_count
 
     @property
     def is_running(self) -> bool:
@@ -247,7 +259,11 @@ class MonitoringService:
         capacity = max(1, int(self._buffer_seconds * settings.sample_rate_hz))
         with self._lock:
             self._aeration = AerationProcessor(
-                AerationAlgorithmParameters(sample_rate_hz=settings.sample_rate_hz),
+                AerationAlgorithmParameters(
+                    sample_rate_hz=settings.sample_rate_hz,
+                    roi_count=self._roi_count,
+                    peak_detection_method=self._peak_detection_method,
+                ),
                 capacity=capacity,
             )
             self._raw_reconstructor = RawFrameReconstructor(settings)
@@ -257,6 +273,35 @@ class MonitoringService:
             self._source.start()
             self._start_pipeline()
             self._publish_state()
+
+    def set_roi_count(self, roi_count: int) -> None:
+        """Apply a new regional resolution to subsequent maps and metrics."""
+        self.set_aeration_configuration(
+            roi_count=roi_count,
+            peak_detection_method=self._peak_detection_method,
+        )
+
+    def set_aeration_configuration(
+        self, *, roi_count: int, peak_detection_method: str
+    ) -> None:
+        """Apply engineering aeration settings and reset the analysis buffer."""
+        parameters = AerationAlgorithmParameters(
+            sample_rate_hz=self._settings.sample_rate_hz,
+            roi_count=roi_count,
+            peak_detection_method=peak_detection_method,
+        )
+        with self._lock:
+            if (
+                roi_count == self._roi_count
+                and peak_detection_method == self._peak_detection_method
+            ):
+                return
+            self._roi_count = roi_count
+            self._peak_detection_method = peak_detection_method
+            self._aeration = AerationProcessor(
+                parameters,
+                capacity=max(1, int(self._buffer_seconds * self._settings.sample_rate_hz)),
+            )
 
     def stop(self) -> None:
         if not self._started:
@@ -287,7 +332,11 @@ class MonitoringService:
         capacity = max(1, int(self._buffer_seconds * settings.sample_rate_hz))
         with self._lock:
             self._aeration = AerationProcessor(
-                AerationAlgorithmParameters(sample_rate_hz=settings.sample_rate_hz),
+                AerationAlgorithmParameters(
+                    sample_rate_hz=settings.sample_rate_hz,
+                    roi_count=self._roi_count,
+                    peak_detection_method=self._peak_detection_method,
+                ),
                 capacity=capacity,
             )
             self._raw_reconstructor = RawFrameReconstructor(settings)
@@ -474,6 +523,8 @@ class MonitoringService:
                 interval_end_seconds=result.interval_end_seconds,
                 analyzed_sample_count=result.analyzed_sample_count,
                 algorithm_parameters=result.parameters,
+                roi_pct=result.roi_percent,
+                roi_trends=(0.0,) * self._roi_count,
             )
 
         roi_pct = result.roi_percent
@@ -494,8 +545,8 @@ class MonitoringService:
             reconstruction_map=reconstruction_map,
             absolute_conductivity_map=absolute_conductivity_map,
             trend_global=_trend(global_values),
-            trend_r=_trend(_mean_channels(roi_values[:4])),
-            trend_l=_trend(_mean_channels(roi_values[4:])),
+            trend_r=_trend(_mean_channels(roi_values[:self._roi_count // 2])),
+            trend_l=_trend(_mean_channels(roi_values[self._roi_count // 2:])),
             roi_trends=tuple(_trend(values) for values in roi_values),
             quality=result.quality,
             quality_reason=result.quality_reason,

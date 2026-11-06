@@ -16,7 +16,11 @@ import numpy as np
 from ..domain import DataQuality, EITFrame, ROI_COUNT
 
 
-ALGORITHM_VERSION = "eit-aeration-mvp-1.0.0"
+DERIVATIVE_PEAK_DETECTOR = "derivative"
+LEGACY_PEAK_DETECTOR = "legacy"
+PEAK_DETECTORS = (DERIVATIVE_PEAK_DETECTOR, LEGACY_PEAK_DETECTOR)
+ALGORITHM_VERSION = "eit-aeration-derivative-2.0.0"
+LEGACY_ALGORITHM_VERSION = "eit-aeration-mvp-1.0.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +36,12 @@ class AerationAlgorithmParameters:
     maximum_rr_bpm: float = 60.0
     artifact_mad_multiplier: float = 30.0
     artifact_history_samples: int = 25
-    version: str = ALGORITHM_VERSION
+    peak_detection_method: str = DERIVATIVE_PEAK_DETECTOR
+    derivative_window_seconds: float = 0.5
+    derivative_dead_zone_multiplier: float = 3.0
+    derivative_persistence_seconds: float = 0.12
+    roi_count: int = ROI_COUNT
+    version: str | None = None
 
     def __post_init__(self) -> None:
         if self.sample_rate_hz <= 0 or not math.isfinite(self.sample_rate_hz):
@@ -49,7 +58,25 @@ class AerationAlgorithmParameters:
             raise ValueError("respiratory-rate limits are invalid")
         if self.artifact_mad_multiplier <= 0 or self.artifact_history_samples < 3:
             raise ValueError("artifact parameters are invalid")
-        if not self.version.strip():
+        if self.peak_detection_method not in PEAK_DETECTORS:
+            raise ValueError("unsupported peak_detection_method")
+        if self.derivative_window_seconds <= 0:
+            raise ValueError("derivative_window_seconds must be positive")
+        if self.derivative_dead_zone_multiplier <= 0:
+            raise ValueError("derivative_dead_zone_multiplier must be positive")
+        if self.derivative_persistence_seconds <= 0:
+            raise ValueError("derivative_persistence_seconds must be positive")
+        if not 2 <= self.roi_count <= 20 or self.roi_count % 2:
+            raise ValueError("roi_count must be an even integer from 2 to 20")
+        if self.version is None:
+            object.__setattr__(
+                self,
+                "version",
+                ALGORITHM_VERSION
+                if self.peak_detection_method == DERIVATIVE_PEAK_DETECTOR
+                else LEGACY_ALGORITHM_VERSION,
+            )
+        elif not self.version.strip():
             raise ValueError("version must not be blank")
 
 
@@ -128,12 +155,12 @@ class AerationProcessor:
     def reset(self) -> None:
         width = self.parameters.smoothing_samples
         self._filter: tuple[deque[float], ...] = tuple(
-            deque(maxlen=width) for _ in range(ROI_COUNT + 1)
+            deque(maxlen=width) for _ in range(self.parameters.roi_count + 1)
         )
         self._times: deque[float] = deque(maxlen=self._capacity)
         self._global: deque[float] = deque(maxlen=self._capacity)
         self._rois: tuple[deque[float], ...] = tuple(
-            deque(maxlen=self._capacity) for _ in range(ROI_COUNT)
+            deque(maxlen=self._capacity) for _ in range(self.parameters.roi_count)
         )
         self._recent_vectors: deque[np.ndarray] = deque(
             maxlen=self.parameters.artifact_history_samples + 1
@@ -154,7 +181,9 @@ class AerationProcessor:
             self._last_quality = DataQuality.UNAVAILABLE
             self._quality_reason = "source_data_unavailable"
             return None
-        global_value, roi_values = _derive_aeration_channels(frame)
+        global_value, roi_values = _derive_aeration_channels(
+            frame, self.parameters.roi_count
+        )
         vector = np.asarray((global_value, *roi_values), dtype=float)
         if self._is_artifact(vector):
             self._last_quality = DataQuality.DEGRADED
@@ -307,8 +336,9 @@ def calculate_aeration_metrics(
         np.arange(global_values.size, dtype=float) / parameters.sample_rate_hz
         if time_values is None else np.asarray(time_values, dtype=float)
     )
-    if len(roi_values) != ROI_COUNT:
-        raise ValueError(f"exactly {ROI_COUNT} ROI channels are required")
+    roi_count = parameters.roi_count
+    if len(roi_values) != roi_count:
+        raise ValueError(f"exactly {roi_count} ROI channels are required")
     if times.ndim != 1 or times.size != global_values.size:
         raise ValueError("time_values must match the global channel")
     minimum = max(2, round(
@@ -333,7 +363,7 @@ def calculate_aeration_metrics(
         )
 
     detection_values = _breathing_detection_signal(global_values, parameters)
-    maxima = _turning_points(detection_values, maxima=True)
+    maxima, minima = _breath_turning_points(detection_values, parameters)
     min_distance = max(1, round(
         parameters.sample_rate_hz * 60.0 / parameters.maximum_rr_bpm
     ))
@@ -355,8 +385,19 @@ def calculate_aeration_metrics(
         # appears as a doubled interval.
         rr = float(60.0 / np.median(selected))
 
-    # Prefer the latest peak-to-peak breath and its preceding expiration level.
-    if maxima.size >= 2:
+    boundary_fallback = False
+    if parameters.peak_detection_method == DERIVATIVE_PEAK_DETECTOR:
+        pair = _latest_derivative_breath(maxima, minima)
+        if pair is not None:
+            expiration_index, inspiration_index = pair
+        else:
+            # Preserve useful amplitudes on short windows, but expose that the
+            # derivative state machine could not confirm a complete breath.
+            boundary_fallback = True
+            expiration_index = int(np.argmin(global_values))
+            inspiration_index = int(np.argmax(global_values))
+    # Legacy behaviour: use extrema inside the latest maximum-to-maximum span.
+    elif maxima.size >= 2:
         start = int(maxima[-2])
         stop = int(maxima[-1]) + 1
         segment = global_values[start:stop]
@@ -398,13 +439,23 @@ def calculate_aeration_metrics(
             selected_cycle_count=selected_cycle_count,
         )
     roi_percent = roi_tvi / roi_total * 100.0
-    right = float(roi_percent[:4].sum())
-    left = float(roi_percent[4:].sum())
-    ventral = float(roi_percent[[0, 1, 4, 5]].sum())
-    dorsal = float(roi_percent[[2, 3, 6, 7]].sum())
+    bands_per_lung = roi_count // 2
+    right = float(roi_percent[:bands_per_lung].sum())
+    left = float(roi_percent[bands_per_lung:].sum())
+    ventral_weights, dorsal_weights = _ventral_dorsal_weights(bands_per_lung)
+    ventral = float(sum(
+        roi_percent[offset + band] * ventral_weights[band]
+        for offset in (0, bands_per_lung)
+        for band in range(bands_per_lung)
+    ))
+    dorsal = float(sum(
+        roi_percent[offset + band] * dorsal_weights[band]
+        for offset in (0, bands_per_lung)
+        for band in range(bands_per_lung)
+    ))
     phase = float(np.clip((global_values[-1] - eeli) / max(tvi, 1e-12), 0.0, 1.0))
 
-    fallback = rr is None
+    fallback = rr is None or boundary_fallback
     quality = source_quality
     reason = source_reason
     if quality is DataQuality.UNAVAILABLE:
@@ -417,7 +468,7 @@ def calculate_aeration_metrics(
         quality = DataQuality.DEGRADED
         reason = "time_window_fallback"
     base_status = MetricAvailability(quality, reason)
-    statuses = {name: base_status for name in _METRIC_NAMES}
+    statuses = {name: base_status for name in _metric_names(roi_count)}
     if rr is None:
         statuses["rr"] = MetricAvailability(
             DataQuality.UNAVAILABLE, "insufficient_complete_cycles"
@@ -433,7 +484,7 @@ def calculate_aeration_metrics(
     return AerationResult(
         quality=quality,
         quality_reason=reason,
-        algorithm_version=parameters.version,
+        algorithm_version=str(parameters.version),
         respiratory_rate_bpm=rr,
         tvi_au=tvi,
         eeli_au=eeli,
@@ -455,10 +506,11 @@ def calculate_aeration_metrics(
     )
 
 
-_METRIC_NAMES = (
-    "rr", "tvi", "eeli", "eili", "r_pct", "l_pct", "rl_ratio", "vd_ratio",
-    *(f"roi_{index}" for index in range(1, ROI_COUNT + 1)),
-)
+def _metric_names(roi_count: int) -> tuple[str, ...]:
+    return (
+        "rr", "tvi", "eeli", "eili", "r_pct", "l_pct", "rl_ratio", "vd_ratio",
+        *(f"roi_{index}" for index in range(1, roi_count + 1)),
+    )
 
 
 def _unavailable(
@@ -474,8 +526,10 @@ def _unavailable(
     return AerationResult(
         quality=DataQuality.UNAVAILABLE,
         quality_reason=reason,
-        algorithm_version=parameters.version,
-        metric_statuses=tuple((name, status) for name in _METRIC_NAMES),
+        algorithm_version=str(parameters.version),
+        roi_tvi_au=(None,) * parameters.roi_count,
+        roi_percent=(None,) * parameters.roi_count,
+        metric_statuses=tuple((name, status) for name in _metric_names(parameters.roi_count)),
         parameters=parameters,
         interval_start_seconds=float(times[0]) if times.size else None,
         interval_end_seconds=float(times[-1]) if times.size else None,
@@ -492,11 +546,7 @@ def _latest_cycle_bounds(
 ) -> tuple[int, int] | None:
     """Return a half-open slice containing the latest contiguous valid cycles."""
     detection_values = _breathing_detection_signal(values, parameters)
-    maxima = _separate_peaks(
-        _turning_points(detection_values, maxima=True),
-        detection_values,
-        max(1, round(parameters.sample_rate_hz * 60.0 / parameters.maximum_rr_bpm)),
-    )
+    maxima, _ = _breath_turning_points(detection_values, parameters)
     if maxima.size < cycle_count + 1:
         return None
     minimum = parameters.sample_rate_hz * 60.0 / parameters.maximum_rr_bpm
@@ -527,29 +577,180 @@ def _breathing_detection_signal(
     return np.convolve(padded, np.ones(width) / width, mode="valid")
 
 
-def _derive_aeration_channels(frame: EITFrame) -> tuple[float, tuple[float, ...]]:
+def _breath_turning_points(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return end-inspiration maxima and end-expiration minima."""
+    distance = max(1, round(
+        parameters.sample_rate_hz * 60.0 / parameters.maximum_rr_bpm
+    ))
+    if parameters.peak_detection_method == LEGACY_PEAK_DETECTOR:
+        maxima = _turning_points(values, maxima=True)
+        minima = _turning_points(values, maxima=False)
+    else:
+        maxima, minima = _derivative_turning_points(values, parameters)
+    return (
+        _separate_peaks(maxima, values, distance),
+        _separate_peaks(minima, -values, distance),
+    )
+
+
+def _derivative_turning_points(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> tuple[np.ndarray, np.ndarray]:
+    """Detect persistent derivative sign changes with an adaptive dead zone.
+
+    A local linear fit estimates dZ/dt in a centred time interval.  The dead
+    zone is derived from the robust variation of adjacent slope estimates and
+    capped relative to the useful slope range so that clean slow breaths are
+    not suppressed.  A positive-to-negative transition marks end inspiration;
+    the opposite transition marks end expiration.
+    """
+    if values.size < 3:
+        empty = np.asarray([], dtype=int)
+        return empty, empty
+    width = max(3, round(
+        parameters.derivative_window_seconds * parameters.sample_rate_hz
+    ))
+    if width % 2 == 0:
+        width += 1
+    width = min(width, values.size if values.size % 2 else values.size - 1)
+    if width < 3:
+        empty = np.asarray([], dtype=int)
+        return empty, empty
+    half = width // 2
+    x = np.arange(-half, half + 1, dtype=float) / parameters.sample_rate_hz
+    kernel = x / float(np.dot(x, x))
+    padded = np.pad(values, (half, half), mode="edge")
+    slopes = np.convolve(padded, kernel[::-1], mode="valid")
+
+    slope_delta = np.diff(slopes)
+    delta_median = float(np.median(slope_delta))
+    delta_mad = float(np.median(np.abs(slope_delta - delta_median)))
+    noise = 1.4826 * delta_mad / math.sqrt(2.0)
+    useful_slope = float(np.percentile(np.abs(slopes), 90))
+    epsilon = max(
+        1e-12,
+        min(
+            noise * parameters.derivative_dead_zone_multiplier,
+            useful_slope * 0.20,
+        ),
+    )
+    signs = np.where(slopes > epsilon, 1, np.where(slopes < -epsilon, -1, 0))
+    persistence = max(1, round(
+        parameters.derivative_persistence_seconds * parameters.sample_rate_hz
+    ))
+
+    maxima: list[int] = []
+    minima: list[int] = []
+    state = 0
+    last_state_index = 0
+    index = 0
+    while index < signs.size:
+        sign = int(signs[index])
+        if sign == 0:
+            index += 1
+            continue
+        stop = min(signs.size, index + persistence)
+        if stop - index < persistence or not np.all(signs[index:stop] == sign):
+            index += 1
+            continue
+        if state == 0:
+            state = sign
+        elif sign != state:
+            span_start = min(last_state_index, index)
+            span = np.abs(slopes[span_start:index + 1])
+            minimum = float(np.min(span))
+            closest = np.flatnonzero(np.isclose(span, minimum, rtol=0.0, atol=1e-15))
+            candidate = span_start + int(round(float(np.mean(closest))))
+            (maxima if state > 0 else minima).append(candidate)
+            state = sign
+        last_state_index = stop - 1
+        index = stop
+    return np.asarray(maxima, dtype=int), np.asarray(minima, dtype=int)
+
+
+def _latest_derivative_breath(
+    maxima: np.ndarray, minima: np.ndarray
+) -> tuple[int, int] | None:
+    """Pair the latest confirmed inspiration with its preceding expiration."""
+    if maxima.size == 0 or minima.size == 0:
+        return None
+    inspiration = int(maxima[-1])
+    lower_bound = int(maxima[-2]) if maxima.size >= 2 else -1
+    candidates = minima[(minima > lower_bound) & (minima < inspiration)]
+    if candidates.size == 0:
+        return None
+    return int(candidates[-1]), inspiration
+
+
+def _derive_aeration_channels(
+    frame: EITFrame, roi_count: int
+) -> tuple[float, tuple[float, ...]]:
     image = np.asarray(frame.reconstructed_delta_z, dtype=float)
-    # Tiny diagnostic maps cannot support eight spatial regions; the versioned
-    # frame channels remain the explicit compatibility fallback.
+    # Tiny diagnostic maps use the versioned eight-channel frame as a
+    # compatibility source and deterministically resample it to the requested
+    # number of regions.
     if image.ndim != 2 or min(image.shape) < 8:
-        return float(frame.global_impedance), tuple(float(v) for v in frame.roi_impedance)
-    masks = _fixed_lung_roi_masks(image.shape)
+        values = _resample_roi_values(frame.roi_impedance, roi_count)
+        return float(frame.global_impedance), values
+    masks = _lung_roi_masks(image.shape, roi_count)
     roi_values = tuple(float(image[mask].sum()) for mask in masks)
     return float(sum(roi_values)), roi_values
 
 
-def _fixed_lung_roi_masks(shape: tuple[int, int]) -> tuple[np.ndarray, ...]:
+def _lung_roi_masks(
+    shape: tuple[int, int], roi_count: int
+) -> tuple[np.ndarray, ...]:
     height, width = shape
     y, x = np.mgrid[-1.0:1.0:complex(height), -1.0:1.0:complex(width)]
     right = ((x + 0.34) / 0.34) ** 2 + (y / 0.62) ** 2 <= 1.0
     left = ((x - 0.34) / 0.34) ** 2 + (y / 0.62) ** 2 <= 1.0
-    edges = np.linspace(-0.62, 0.62, 5)
+    bands_per_lung = roi_count // 2
+    edges = np.linspace(-0.62, 0.62, bands_per_lung + 1)
     result: list[np.ndarray] = []
     for lung in (right, left):
-        for index in range(4):
-            upper = y <= edges[index + 1] if index == 3 else y < edges[index + 1]
+        for index in range(bands_per_lung):
+            upper = (
+                y <= edges[index + 1]
+                if index == bands_per_lung - 1
+                else y < edges[index + 1]
+            )
             result.append(lung & (y >= edges[index]) & upper)
     return tuple(result)
+
+
+def _resample_roi_values(
+    source: tuple[float, ...], roi_count: int
+) -> tuple[float, ...]:
+    """Preserve each lung total while changing its ventral/dorsal resolution."""
+    source_bands = len(source) // 2
+    target_bands = roi_count // 2
+    result: list[float] = []
+    for offset in (0, source_bands):
+        values = np.asarray(source[offset:offset + source_bands], dtype=float)
+        source_edges = np.linspace(0.0, 1.0, source_bands + 1)
+        target_edges = np.linspace(0.0, 1.0, target_bands + 1)
+        for target in range(target_bands):
+            total = 0.0
+            for index, value in enumerate(values):
+                overlap = max(
+                    0.0,
+                    min(target_edges[target + 1], source_edges[index + 1])
+                    - max(target_edges[target], source_edges[index]),
+                )
+                total += float(value) * overlap * source_bands
+            result.append(total)
+    return tuple(result)
+
+
+def _ventral_dorsal_weights(
+    bands_per_lung: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split a centre band equally when a lung has an odd band count."""
+    centers = (np.arange(bands_per_lung, dtype=float) + 0.5) / bands_per_lung
+    ventral = np.where(centers < 0.5, 1.0, np.where(centers == 0.5, 0.5, 0.0))
+    return ventral, 1.0 - ventral
 
 
 def _turning_points(values: np.ndarray, *, maxima: bool) -> np.ndarray:

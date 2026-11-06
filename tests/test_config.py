@@ -203,6 +203,7 @@ class AppConfigTest(unittest.TestCase):
                 "EIT_DATABASE_PATH": "/tmp/eit.sqlite3",
                 "EIT_RAW_DATA_DIR": "/tmp/eit-frames",
                 "EIT_EXPORT_DIR": "/tmp/eit-export",
+                "EIT_BREATH_MODEL_PATH": "/tmp/breathclf.joblib",
                 "EIT_DEVICE_ENDPOINT": "serial:///dev/ttyUSB0",
                 "EIT_LOG_LEVEL": "debug",
                 "EIT_LOG_PATH": "/tmp/eit-log.jsonl",
@@ -214,6 +215,7 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(config.database_path, Path("/tmp/eit.sqlite3"))
         self.assertEqual(config.raw_data_dir, Path("/tmp/eit-frames"))
         self.assertEqual(config.export_dir, Path("/tmp/eit-export"))
+        self.assertEqual(config.breath_model_path, Path("/tmp/breathclf.joblib"))
         self.assertEqual(config.device_endpoint, "serial:///dev/ttyUSB0")
         self.assertEqual(config.log_level, "DEBUG")
         self.assertEqual(config.log_path, Path("/tmp/eit-log.jsonl"))

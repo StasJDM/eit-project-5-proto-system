@@ -43,6 +43,7 @@ class AppConfig:
     database_path: Path = Path("data/fromfile/eit.sqlite3")
     raw_data_dir: Path = Path("data/fromfile/frames")
     export_dir: Path = Path("exports")
+    breath_model_path: Path | None = None
     device_endpoint: str | None = None
     log_level: str = "INFO"
     log_path: Path = Path("data/fromfile/logs/eit.jsonl")
@@ -136,6 +137,10 @@ class AppConfig:
             Path("exports"),
             diagnostics,
         )
+        raw_breath_model = values.get("EIT_BREATH_MODEL_PATH", "").strip()
+        breath_model_path = (
+            Path(raw_breath_model).expanduser() if raw_breath_model else None
+        )
 
         endpoint = values.get("EIT_DEVICE_ENDPOINT", "").strip() or None
         if data_mode is DataMode.DEVICE and endpoint is None:
@@ -183,6 +188,7 @@ class AppConfig:
             database_path=database_path,
             raw_data_dir=raw_data_dir,
             export_dir=export_dir,
+            breath_model_path=breath_model_path,
             device_endpoint=endpoint,
             log_level=raw_level,
             log_path=log_path,

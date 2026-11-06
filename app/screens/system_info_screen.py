@@ -8,16 +8,38 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QDialog, QButtonGroup, QRadioButton,
+    QFrame, QDialog, QButtonGroup, QRadioButton, QTabWidget,
+    QCheckBox, QSpinBox, QGroupBox, QScrollArea, QComboBox,
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QValidator
 
 from ..config import AppConfig, DataMode
+from ..application import EngineeringSettings, EngineeringSettingsService
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
 from ..i18n import t, i18n, LANGUAGES
 
 
 # ── Language selector dialog ──────────────────────────────────────────────────
+
+
+class _EvenRoiSpinBox(QSpinBox):
+    """Numeric editor that only accepts even ROI counts from 2 through 20."""
+
+    def validate(self, text: str, position: int):
+        stripped = text.strip()
+        if not stripped:
+            return QValidator.Intermediate, text, position
+        try:
+            value = int(stripped)
+        except ValueError:
+            return QValidator.Invalid, text, position
+        state = (
+            QValidator.Acceptable
+            if 2 <= value <= 20 and value % 2 == 0
+            else QValidator.Invalid
+        )
+        return state, text, position
 
 class LanguageDialog(QDialog):
     """Modal dialog for selecting the interface language."""
@@ -174,9 +196,15 @@ _NUM_W = 56
 class SystemInfoScreen(QWidget):
     """System information table — 12 parameters from spec Table 7.5."""
 
-    def __init__(self, config: AppConfig | None = None, parent=None):
+    def __init__(
+        self,
+        config: AppConfig | None = None,
+        engineering_settings: EngineeringSettingsService | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._config = config or AppConfig.from_env()
+        self._engineering_settings = engineering_settings
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
@@ -196,13 +224,28 @@ class SystemInfoScreen(QWidget):
         sep.setStyleSheet(f"color:{C['border']};")
         outer.addWidget(sep)
 
+        self._tabs = QTabWidget()
+        self._info_tab = QWidget()
+        self._engineering_tab = QWidget()
+        self._tabs.addTab(self._info_tab, t("sys_tab_information"))
+        self._tabs.addTab(self._engineering_tab, t("sys_tab_engineering"))
+        outer.addWidget(self._tabs, stretch=1)
+
+        info_lay = QVBoxLayout(self._info_tab)
+        info_lay.setContentsMargins(0, 12, 0, 0)
+        info_lay.setSpacing(0)
+
         # Table container
         table = QWidget()
         table.setStyleSheet("background:transparent;")
         table_lay = QVBoxLayout(table)
         table_lay.setContentsMargins(0, 0, 0, 0)
         table_lay.setSpacing(0)
-        outer.addWidget(table)
+        info_scroll = QScrollArea()
+        info_scroll.setWidgetResizable(True)
+        info_scroll.setFrameShape(QFrame.NoFrame)
+        info_scroll.setWidget(table)
+        info_lay.addWidget(info_scroll)
 
         # Header row
         self._lbl_h_num, self._lbl_h_param, self._lbl_h_value = \
@@ -221,7 +264,7 @@ class SystemInfoScreen(QWidget):
             self._build_row(table_lay, i + 1, lbl_key, val_key,
                             val_is_i18n, row_type, even=(i % 2 == 0))
 
-        outer.addStretch()
+        self._build_engineering_tab()
 
         # Datetime ticker
         self._timer = QTimer(self)
@@ -230,6 +273,103 @@ class SystemInfoScreen(QWidget):
         self._tick()
 
         i18n.language_changed.connect(self.retranslate)
+
+    def _build_engineering_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
+
+        self._mode_group = QGroupBox(t("sys_engineering_modes"))
+        mode_layout = QHBoxLayout(self._mode_group)
+        self._mode_checks: dict[str, QCheckBox] = {}
+        for mode, key in (
+            ("adult", "sys_mode_adult"),
+            ("infant", "sys_mode_infant"),
+            ("ventilation", "sys_mode_ventilation"),
+        ):
+            checkbox = QCheckBox(t(key))
+            checkbox.clicked.connect(
+                lambda checked, selected=mode: self._validate_mode_selection(selected, checked)
+            )
+            mode_layout.addWidget(checkbox)
+            self._mode_checks[mode] = checkbox
+        mode_layout.addStretch()
+
+        roi_row = QHBoxLayout()
+        self._roi_label = QLabel(t("sys_engineering_roi_count"))
+        roi_row.addWidget(self._roi_label)
+        self._roi_spin = _EvenRoiSpinBox()
+        self._roi_spin.setRange(2, 20)
+        self._roi_spin.setSingleStep(2)
+        self._roi_spin.setValue(8)
+        self._roi_spin.setFixedWidth(120)
+        roi_row.addWidget(self._roi_spin)
+        roi_row.addStretch()
+        layout.addWidget(self._mode_group)
+        layout.addLayout(roi_row)
+
+        detector_row = QHBoxLayout()
+        self._peak_detector_label = QLabel(t("sys_engineering_peak_detector"))
+        detector_row.addWidget(self._peak_detector_label)
+        self._peak_detector_combo = QComboBox()
+        self._peak_detector_combo.addItem(
+            t("sys_peak_detector_derivative"), "derivative"
+        )
+        self._peak_detector_combo.addItem(t("sys_peak_detector_legacy"), "legacy")
+        self._peak_detector_combo.setMinimumWidth(280)
+        detector_row.addWidget(self._peak_detector_combo)
+        detector_row.addStretch()
+        layout.addLayout(detector_row)
+
+        self._engineering_hint = QLabel(t("sys_engineering_hint"))
+        self._engineering_hint.setWordWrap(True)
+        self._engineering_hint.setStyleSheet(f"color:{C['text_dim']};")
+        layout.addWidget(self._engineering_hint)
+        layout.addStretch()
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        self._engineering_apply = QPushButton(t("sys_engineering_apply"))
+        self._engineering_apply.setMinimumWidth(180)
+        self._engineering_apply.clicked.connect(self._save_engineering_settings)
+        button_row.addWidget(self._engineering_apply)
+        layout.addLayout(button_row)
+
+        current = (
+            self._engineering_settings.current
+            if self._engineering_settings is not None
+            else EngineeringSettings()
+        )
+        self._load_engineering_settings(current)
+
+    def _load_engineering_settings(self, settings: EngineeringSettings) -> None:
+        for mode, checkbox in self._mode_checks.items():
+            checkbox.setChecked(mode in settings.work_modes)
+        self._roi_spin.setValue(settings.roi_count)
+        detector_index = self._peak_detector_combo.findData(
+            settings.peak_detection_method
+        )
+        self._peak_detector_combo.setCurrentIndex(max(0, detector_index))
+
+    def _validate_mode_selection(self, mode: str, checked: bool) -> None:
+        if not checked and not any(box.isChecked() for box in self._mode_checks.values()):
+            self._mode_checks[mode].setChecked(True)
+
+    def _save_engineering_settings(self) -> None:
+        settings = EngineeringSettings(
+            work_modes=tuple(
+                mode for mode, checkbox in self._mode_checks.items() if checkbox.isChecked()
+            ),
+            roi_count=self._roi_spin.value(),
+            peak_detection_method=str(self._peak_detector_combo.currentData()),
+        )
+        if self._engineering_settings is not None:
+            self._engineering_settings.save(settings)
+        self._engineering_apply.setText(t("sys_engineering_saved"))
+        QTimer.singleShot(
+            1500,
+            lambda: self._engineering_apply.setText(t("sys_engineering_apply")),
+        )
 
     # ── Row builders ──────────────────────────────────────────────────────────
 
@@ -364,6 +504,23 @@ class SystemInfoScreen(QWidget):
         self._lbl_h_num.setText(t("sys_tbl_num"))
         self._lbl_h_param.setText(t("sys_tbl_param"))
         self._lbl_h_value.setText(t("sys_tbl_value"))
+        self._tabs.setTabText(0, t("sys_tab_information"))
+        self._tabs.setTabText(1, t("sys_tab_engineering"))
+        self._mode_group.setTitle(t("sys_engineering_modes"))
+        for mode, key in (
+            ("adult", "sys_mode_adult"),
+            ("infant", "sys_mode_infant"),
+            ("ventilation", "sys_mode_ventilation"),
+        ):
+            self._mode_checks[mode].setText(t(key))
+        self._roi_label.setText(t("sys_engineering_roi_count"))
+        self._peak_detector_label.setText(t("sys_engineering_peak_detector"))
+        self._peak_detector_combo.setItemText(
+            0, t("sys_peak_detector_derivative")
+        )
+        self._peak_detector_combo.setItemText(1, t("sys_peak_detector_legacy"))
+        self._engineering_hint.setText(t("sys_engineering_hint"))
+        self._engineering_apply.setText(t("sys_engineering_apply"))
 
         for lbl_key, lbl in self._param_lbls:
             lbl.setText(t(lbl_key))

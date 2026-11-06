@@ -22,7 +22,7 @@ from .application import (
 )
 from .domain import StudyStatus
 from .i18n import i18n, t
-from .styles import C
+from .styles import C, start_button_style
 from .styles import stylesheet
 from .session_timers import SessionTimers, fmt_duration
 from .widgets.header_bar import HeaderBar
@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
             MainScreen(
                 self._container.monitoring,
                 marker_service=self._container.marker_service,
+                engineering_settings=self._container.engineering_settings,
             ),
         )
         self._register(
@@ -176,6 +177,7 @@ class MainWindow(QMainWindow):
                 self._container.monitoring,
                 marker_service=self._container.marker_service,
                 classification_service=self._container.breathing_classification,
+                engineering_settings=self._container.engineering_settings,
             ),
         )
         self._register(
@@ -202,7 +204,13 @@ class MainWindow(QMainWindow):
                 self._container.adverse_event_service,
             )
         )
-        self._register("system",       SystemInfoScreen(self._container.config))
+        self._register(
+            "system",
+            SystemInfoScreen(
+                self._container.config,
+                self._container.engineering_settings,
+            ),
+        )
         self._register(
             "export",
             ExportDataScreen(self._container.export_service, self._container.config.export_dir),
@@ -330,6 +338,10 @@ class MainWindow(QMainWindow):
         if lifecycle is None:
             return
         try:
+            if lifecycle.status in {
+                None, StudyStatus.DRAFT, StudyStatus.COMPLETED, StudyStatus.FAILED,
+            }:
+                self._prepare_study_for_immediate_start()
             if lifecycle.status is StudyStatus.READY:
                 controller.start() if controller is not None else lifecycle.start()
             elif lifecycle.status is StudyStatus.PAUSED:
@@ -362,11 +374,26 @@ class MainWindow(QMainWindow):
             )
         self._sync_study_controls()
 
+    def _prepare_study_for_immediate_start(self) -> None:
+        lifecycle = self._container.study_lifecycle
+        if lifecycle is None:
+            raise StudyLifecycleError("study lifecycle is unavailable")
+        if lifecycle.selected_patient_id is None:
+            patient_service = self._container.patient_service
+            if patient_service is None:
+                raise StudyLifecycleError("patient service is unavailable")
+            patient = patient_service.ensure_automatic_patient()
+            lifecycle.select_patient(patient.id)
+        if lifecycle.status in {None, StudyStatus.COMPLETED, StudyStatus.FAILED}:
+            lifecycle.create_study()
+        if lifecycle.status is StudyStatus.DRAFT:
+            lifecycle.prepare()
+
     def _sync_study_controls(self):
         lifecycle = self._container.study_lifecycle
         status = lifecycle.status if lifecycle is not None else None
         running = status is StudyStatus.RUNNING
-        enabled = status in {StudyStatus.READY, StudyStatus.RUNNING, StudyStatus.PAUSED}
+        enabled = lifecycle is not None
         playback_active = (
             self._container.playback_service is not None
             and self._container.playback_service.snapshot.active
@@ -381,7 +408,7 @@ class MainWindow(QMainWindow):
                     f"QPushButton{{background:{C['alarm']};color:white;font-weight:bold;}}"
                 )
             else:
-                button.setStyleSheet("")
+                button.setStyleSheet(start_button_style())
         main = self._screens.get("main")
         if isinstance(main, MainScreen):
             main.left.sync_start(running)

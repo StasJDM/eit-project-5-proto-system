@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from .application import (
-    AdverseEventService, BreathingClassificationService, DiagnosisCatalogService, EventBus,
-    EITSettingsService, ElectrodeQualityService, EventMarkerService, MonitoringController,
+    AdverseEventService, BreathClfClassifier, BreathingClassificationService, DiagnosisCatalogService, EventBus,
+    EITSettingsService, EngineeringSettingsService, ElectrodeQualityService, EventMarkerService, MonitoringController,
     MonitoringService, PatientService, SessionClockService,
     StudyLifecycleService, StudyPlaybackService, StudyRecordingService,
     TrendService, StudyExportService, MedicalReportService,
@@ -35,6 +35,7 @@ class ApplicationContainer:
     patient_service: PatientService | None = None
     diagnosis_catalog: DiagnosisCatalogService | None = None
     eit_settings: EITSettingsService | None = None
+    engineering_settings: EngineeringSettingsService | None = None
     study_lifecycle: StudyLifecycleService | None = None
     recording_service: StudyRecordingService | None = None
     playback_service: StudyPlaybackService | None = None
@@ -67,8 +68,21 @@ class ApplicationContainer:
         )
         event_bus = EventBus()
         eit_settings = EITSettingsService(repositories.settings, event_bus)
+        engineering_settings = EngineeringSettingsService(repositories.settings, event_bus)
         source = create_data_source(resolved)
-        monitoring = MonitoringService(source, event_bus, settings=eit_settings.current)
+        monitoring = MonitoringService(
+            source,
+            event_bus,
+            settings=eit_settings.current,
+            roi_count=engineering_settings.current.roi_count,
+            peak_detection_method=engineering_settings.current.peak_detection_method,
+        )
+        engineering_settings.subscribe(
+            lambda settings: monitoring.set_aeration_configuration(
+                roi_count=settings.roi_count,
+                peak_detection_method=settings.peak_detection_method,
+            )
+        )
         diagnostics = list(resolved.diagnostics)
         technical_event(
             _logger,
@@ -122,7 +136,10 @@ class ApplicationContainer:
         adverse_event_service = AdverseEventService(
             repositories.events, lifecycle, event_bus
         )
-        breathing_classification = BreathingClassificationService()
+        breathing_classification = BreathingClassificationService(
+            BreathClfClassifier(resolved.breath_model_path),
+            allow_experimental=True,
+        )
         export_service = StudyExportService(repositories, recording_store)
         report_service = MedicalReportService(repositories, resolved.export_dir / "reports")
         return cls(
@@ -137,6 +154,7 @@ class ApplicationContainer:
             patient_service=PatientService(repositories.patients),
             diagnosis_catalog=DiagnosisCatalogService(repositories.settings, event_bus),
             eit_settings=eit_settings,
+            engineering_settings=engineering_settings,
             study_lifecycle=lifecycle,
             recording_service=recording_service,
             playback_service=playback_service,

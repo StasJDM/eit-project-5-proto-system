@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, QDate, QTimer, QStringListModel, Signal
 from ..application import (
     DiagnosisCatalogService, PatientDraft, PatientService, PatientValidationError,
     StudyHistoryEntry, StudyLifecycleError, StudyLifecycleService,
-    StudyPlaybackError, StudyPlaybackService, full_years,
+    StudyPlaybackError, StudyPlaybackService, diagnosis_text, full_years,
     resolve_diagnosis, search_diagnoses,
 )
 from ..domain import Diagnosis, Patient, StudyStatus, VentilationDetails
@@ -297,7 +297,7 @@ class _DiagnosisDialog(QDialog):
     def _refresh(self, query: str) -> None:
         self._list.clear()
         for item in search_diagnoses(query, self._classification):
-            self._list.addItem(f"{item.code} — {item.title}")
+            self._list.addItem(diagnosis_text(item, i18n.lang))
         if self._list.count():
             self._list.setCurrentRow(0)
 
@@ -823,9 +823,9 @@ class PatientScreen(QWidget):
             return selected
         return resolve_diagnosis(stripped, self._active_classification())
 
-    @staticmethod
-    def _diagnosis_text(diagnosis: Diagnosis) -> str:
-        return f"{diagnosis.code} — {diagnosis.title}"
+    def _diagnosis_text(self, diagnosis: Diagnosis) -> str:
+        current = resolve_diagnosis(diagnosis.code, diagnosis.classification) or diagnosis
+        return diagnosis_text(current, i18n.lang)
 
     def _active_classification(self) -> str:
         return (
@@ -1112,6 +1112,16 @@ class PatientScreen(QWidget):
         self._lbl_main_diag.setText(t("pat_main_diag"))
         self._lbl_acc_diag.setText(t("pat_accompany_diag"))
         self.refresh_diagnosis_catalog()
+        if self._main_diagnosis is not None:
+            blocked = self._e_main_diag.blockSignals(True)
+            self._e_main_diag.setText(self._diagnosis_text(self._main_diagnosis))
+            self._e_main_diag.blockSignals(blocked)
+        if self._accompanying_diagnoses:
+            blocked = self._e_acc_diag.blockSignals(True)
+            self._e_acc_diag.setText(
+                self._diagnosis_text(self._accompanying_diagnoses[0])
+            )
+            self._e_acc_diag.blockSignals(blocked)
         self._lbl_ivl.setText(t("pat_ivl"))
         self._btn_ivl_yes.setText(t("pat_yes"))
         self._btn_ivl_no.setText(t("pat_no"))

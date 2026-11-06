@@ -67,9 +67,24 @@ class ClassificationMetrics:
     correct: int
 
 
+@dataclass(frozen=True, slots=True)
+class BreathingModelVisualization:
+    """Model-owned PCA points and class templates for the analysis screen."""
+
+    signature: str
+    class_names: tuple[str, ...]
+    train_scores: np.ndarray
+    train_labels: np.ndarray
+    templates: np.ndarray
+    explained_variance_ratio: np.ndarray
+    sample_rate_hz: float
+    current_score: np.ndarray | None = None
+
+
 class ValidatedBreathingClassifier(Protocol):
     algorithm_version: str
     clinically_validated: bool
+    operational: bool
 
     def classify(
         self, values: np.ndarray, sample_rate_hz: float,
@@ -78,8 +93,14 @@ class ValidatedBreathingClassifier(Protocol):
 
 
 class BreathingClassificationService:
-    def __init__(self, classifier: ValidatedBreathingClassifier | None = None) -> None:
+    def __init__(
+        self,
+        classifier: ValidatedBreathingClassifier | None = None,
+        *,
+        allow_experimental: bool = False,
+    ) -> None:
         self._classifier = classifier
+        self._allow_experimental = allow_experimental
         self._manual: ManualBreathingAssessment | None = None
 
     @property
@@ -98,7 +119,13 @@ class BreathingClassificationService:
         if interval_end_utc < interval_start_utc:
             raise ValueError("classification interval is reversed")
         classifier = self._classifier
-        if classifier is None or not classifier.clinically_validated:
+        if classifier is None or (
+            not classifier.clinically_validated
+            and not (
+                self._allow_experimental
+                and bool(getattr(classifier, "operational", False))
+            )
+        ):
             return BreathingClassificationResult(
                 BreathingClass.UNDETERMINED,
                 0.0,
@@ -114,6 +141,15 @@ class BreathingClassificationService:
         if not 0.0 <= result.confidence <= 1.0:
             raise ValueError("classifier confidence must be between 0 and 1")
         return result
+
+    def visualization(
+        self, values: Sequence[float], sample_rate_hz: float
+    ) -> BreathingModelVisualization | None:
+        classifier = self._classifier
+        provider = getattr(classifier, "visualization", None)
+        if provider is None:
+            return None
+        return provider(np.asarray(values, dtype=float), float(sample_rate_hz))
 
     def set_manual_assessment(
         self, breathing_class: BreathingClass, author: str, note: str | None = None,

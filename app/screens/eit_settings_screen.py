@@ -318,6 +318,10 @@ class EITSettingsScreen(QWidget):
         protocol_controls.addWidget(self._row_electrode_order, stretch=1)
         protocol_controls.addWidget(self._row_measurement_sequence, stretch=1)
         outer.addLayout(protocol_controls)
+        # Гипотезы протокола остаются частью сохранённых настроек и расчётного
+        # конвейера, но больше не показываются в операторском интерфейсе.
+        self._row_electrode_order.hide()
+        self._row_measurement_sequence.hide()
 
         self._load_settings(settings)
 
