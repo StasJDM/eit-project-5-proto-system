@@ -86,6 +86,13 @@ class StudyLifecycleTest(unittest.TestCase):
         )
         self.assertEqual(self.events[-1].payload["status"], "completed")
 
+    def test_new_study_uses_operator_as_default_author(self):
+        self.service.select_patient(self.patient.id)
+
+        draft = self.service.create_study()
+
+        self.assertEqual(draft.author, "Оператор")
+
     def test_invalid_transitions_and_terminal_mutation_are_rejected(self):
         self.service.select_patient(self.patient.id)
         self.service.create_study()

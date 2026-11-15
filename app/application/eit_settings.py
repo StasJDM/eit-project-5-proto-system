@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ..domain import AcquisitionSettings, deserialize_model, serialize_model
 from .events import ApplicationEvent, EventBus, EventType
 from .ports import SettingsRepository
@@ -14,6 +16,7 @@ class EITSettingsService:
     def __init__(self, repository: SettingsRepository, event_bus: EventBus) -> None:
         self._repository = repository
         self._event_bus = event_bus
+        self._listeners: list[Callable[[AcquisitionSettings], None]] = []
 
     @property
     def current(self) -> AcquisitionSettings:
@@ -35,7 +38,20 @@ class EITSettingsService:
             EventType.SETTINGS_CHANGED,
             payload={ACQUISITION_SETTINGS_KEY: serialize_model(settings)},
         ))
+        for listener in tuple(self._listeners):
+            listener(settings)
         return settings
+
+    def subscribe(
+        self, listener: Callable[[AcquisitionSettings], None]
+    ) -> Callable[[], None]:
+        self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return unsubscribe
 
     def reset(self) -> AcquisitionSettings:
         return self.save(AcquisitionSettings())

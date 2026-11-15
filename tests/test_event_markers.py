@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from app.application import EventBus, EventMarkerService, StudyLifecycleService
 from app.config import DataMode
@@ -21,6 +22,14 @@ class Clock:
 
 
 class EventMarkerServiceTest(unittest.TestCase):
+    def test_legacy_default_author_is_displayed_as_operator(self):
+        lifecycle = SimpleNamespace(
+            current_study=SimpleNamespace(author="local-operator")
+        )
+        service = EventMarkerService(None, lifecycle, EventBus())
+
+        self.assertEqual(service.default_author, "Оператор")
+
     def test_marker_position_metadata_correction_and_restart_persistence(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "markers.sqlite3"

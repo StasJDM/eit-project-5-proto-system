@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 import json
 import logging
 from pathlib import Path
@@ -16,6 +17,7 @@ from uuid import UUID
 from ..config import DataMode
 from ..domain import (
     Alarm,
+    DataQuality,
     Event,
     MonitoringSession,
     Patient,
@@ -28,7 +30,7 @@ from ..domain import (
 from ..technical_logging import get_logger, technical_event
 
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 _logger = get_logger("storage")
 
 
@@ -142,6 +144,10 @@ _MIGRATIONS: dict[int, str] = {
             ON trend_aggregates(study_id, aggregation_kind, interval_start_utc);
         CREATE INDEX ix_trend_aggregates_session_time
             ON trend_aggregates(session_id, interval_start_utc);
+    """,
+    5: """
+        CREATE INDEX ix_trend_aggregates_study_kind_position
+            ON trend_aggregates(study_id, aggregation_kind, position_seconds);
     """,
 }
 
@@ -519,6 +525,12 @@ class SQLiteEventRepository:
         )
         return tuple(_decode(row["payload_json"], Event) for row in rows)
 
+    def list_all(self) -> Sequence[Event]:
+        rows = self.db.fetchall(
+            "SELECT payload_json FROM events ORDER BY occurred_at_utc, id"
+        )
+        return tuple(_decode(row["payload_json"], Event) for row in rows)
+
     def search(
         self,
         study_id: UUID,
@@ -624,8 +636,132 @@ class SQLiteTrendRepository:
         )
         if row is None or row["start"] is None:
             return None
-        from datetime import datetime
         return datetime.fromisoformat(row["start"]), datetime.fromisoformat(row["end"])
+
+    def list_position_range(
+        self,
+        study_id: UUID,
+        start_seconds: float,
+        end_seconds: float,
+        *,
+        aggregation_kind: str = "interval",
+    ) -> Sequence[TrendAggregate]:
+        if end_seconds < start_seconds:
+            return ()
+        normalized = self._normalized_legacy_timeline(
+            study_id, aggregation_kind=aggregation_kind
+        )
+        if normalized is not None:
+            return tuple(
+                point for point in normalized
+                if start_seconds <= point.position_seconds <= end_seconds
+            )
+        rows = self.db.fetchall(
+            "SELECT payload_json FROM trend_aggregates WHERE study_id = ? "
+            "AND aggregation_kind = ? AND position_seconds >= ? AND position_seconds <= ? "
+            "ORDER BY position_seconds, id",
+            (str(study_id), aggregation_kind, float(start_seconds), float(end_seconds)),
+        )
+        return tuple(_decode(row["payload_json"], TrendAggregate) for row in rows)
+
+    def position_bounds(self, study_id: UUID, *, aggregation_kind: str = "interval"):
+        normalized = self._normalized_legacy_timeline(
+            study_id, aggregation_kind=aggregation_kind
+        )
+        if normalized is not None:
+            if not normalized:
+                return None
+            return normalized[0].position_seconds, normalized[-1].position_seconds
+        row = self.db.fetchone(
+            "SELECT MIN(position_seconds) AS start, MAX(position_seconds) AS end "
+            "FROM trend_aggregates WHERE study_id = ? AND aggregation_kind = ?",
+            (str(study_id), aggregation_kind),
+        )
+        if row is None or row["start"] is None:
+            return None
+        return float(row["start"]), float(row["end"])
+
+    def first_usable(
+        self, study_id: UUID, *, aggregation_kind: str = "interval"
+    ) -> TrendAggregate | None:
+        normalized = self._normalized_legacy_timeline(
+            study_id, aggregation_kind=aggregation_kind
+        )
+        if normalized is not None:
+            return next(
+                (
+                    point for point in normalized
+                    if point.quality in {DataQuality.VALID, DataQuality.DEGRADED}
+                ),
+                None,
+            )
+        row = self.db.fetchone(
+            "SELECT payload_json FROM trend_aggregates WHERE study_id = ? "
+            "AND aggregation_kind = ? AND quality IN (?, ?) "
+            "ORDER BY position_seconds, id LIMIT 1",
+            (
+                str(study_id), aggregation_kind,
+                DataQuality.VALID.value, DataQuality.DEGRADED.value,
+            ),
+        )
+        return None if row is None else _decode(row["payload_json"], TrendAggregate)
+
+    def _normalized_legacy_timeline(
+        self, study_id: UUID, *, aggregation_kind: str
+    ) -> tuple[TrendAggregate, ...] | None:
+        """Recover legacy fromfile trends with invalid active-time positions.
+
+        Older builds derived the active position from archived source UTC.  For a
+        sufficiently collapsed series, expose a deterministic relative source
+        timeline so already recorded studies remain readable.  Healthy series
+        keep the indexed SQL path above.
+        """
+        stats = self.db.fetchone(
+            "SELECT COUNT(*) AS total, COUNT(DISTINCT position_seconds) AS distinct_count "
+            "FROM trend_aggregates WHERE study_id = ? AND aggregation_kind = ?",
+            (str(study_id), aggregation_kind),
+        )
+        total = 0 if stats is None else int(stats["total"])
+        distinct_count = 0 if stats is None else int(stats["distinct_count"])
+        if total == 0:
+            return None
+        first_row = self.db.fetchone(
+            "SELECT payload_json FROM trend_aggregates WHERE study_id = ? "
+            "AND aggregation_kind = ? ORDER BY interval_start_utc, id LIMIT 1",
+            (str(study_id), aggregation_kind),
+        )
+        if first_row is None:
+            return None
+        first_point = _decode(first_row["payload_json"], TrendAggregate)
+        session_row = self.db.fetchone(
+            "SELECT started_at_utc FROM monitoring_sessions WHERE id = ?",
+            (str(first_point.session_id),),
+        )
+        archived_timestamps = (
+            session_row is not None
+            and session_row["started_at_utc"] is not None
+            and first_point.interval_end_utc
+            < datetime.fromisoformat(session_row["started_at_utc"])
+        )
+        collapsed = total >= 3 and distinct_count <= max(2, total // 4)
+        if not archived_timestamps and not collapsed:
+            return None
+        rows = self.db.fetchall(
+            "SELECT payload_json FROM trend_aggregates WHERE study_id = ? "
+            "AND aggregation_kind = ? ORDER BY interval_start_utc, id",
+            (str(study_id), aggregation_kind),
+        )
+        points = tuple(_decode(row["payload_json"], TrendAggregate) for row in rows)
+        anchor = points[0].interval_start_utc
+        return tuple(
+            replace(
+                point,
+                position_seconds=max(
+                    0.0, (point.interval_end_utc - anchor).total_seconds()
+                ),
+            )
+            for point in points
+        )
 
 
 class SQLiteReportRepository:

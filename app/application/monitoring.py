@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import Enum
 import logging
 from threading import RLock
@@ -19,8 +20,10 @@ from ..reconstruction.processor import RawFrameReconstructor, ReconstructionDiag
 from ..reconstruction.reconstruction import ReconstructionError
 from .acquisition import AcquisitionMetrics, AcquisitionPipeline, SourceFrame
 from .aeration import (
-    AerationAlgorithmParameters, AerationProcessor, MetricAvailability,
+    AerationAlgorithmParameters, AerationProcessor, AerationResult,
+    MetricAvailability,
 )
+from .peep import PeepProcessor, PeepResult
 from .events import ApplicationEvent, EventBus, EventType
 from ..technical_logging import get_logger, technical_event
 
@@ -48,17 +51,18 @@ class MonitoringSnapshot:
     eeli: float | None = None
     eili: float | None = None
     tvi: float | None = None
+    mvi: float | None = None
     phase: float | None = None
     roi_pct: tuple[float | None, ...] = field(default_factory=lambda: (None,) * 8)
     reconstruction_map: ReconstructionMap | None = None
     absolute_conductivity_map: ReconstructionMap | None = None
-    trend_global: float = 0.0
-    trend_r: float = 0.0
-    trend_l: float = 0.0
-    roi_trends: tuple[float, ...] = field(default_factory=lambda: (0.0,) * 8)
+    trend_global: float | None = None
+    trend_r: float | None = None
+    trend_l: float | None = None
+    roi_trends: tuple[float | None, ...] = field(default_factory=lambda: (None,) * 8)
     quality: DataQuality = DataQuality.UNAVAILABLE
     quality_reason: str | None = "insufficient_data"
-    algorithm_version: str = "eit-aeration-derivative-2.0.0"
+    algorithm_version: str = "eit-aeration-mad-mean-3.1.0"
     metric_statuses: tuple[tuple[str, MetricAvailability], ...] = ()
     stream_state: str = "empty"
     analysis_window_seconds: float = 30.0
@@ -70,6 +74,7 @@ class MonitoringSnapshot:
     algorithm_parameters: AerationAlgorithmParameters = field(
         default_factory=AerationAlgorithmParameters
     )
+    peep: PeepResult = field(default_factory=PeepResult)
 
     def status_for(self, metric: str) -> MetricAvailability:
         return dict(self.metric_statuses).get(
@@ -83,6 +88,48 @@ class MonitoringView:
 
     snapshot: MonitoringSnapshot
     waveforms: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class TrendSample:
+    """One reconstructed, presentation-equivalent sample used by trend storage."""
+
+    sequence_number: int
+    timestamp_utc: datetime
+    global_value: float | None
+    roi_values: tuple[float | None, ...]
+    quality: DataQuality
+    quality_reason: str | None = None
+    phase: float | None = None
+    respiratory_rate_bpm: float | None = None
+    metric_values: tuple[tuple[str, float | None], ...] = ()
+    # Active-session position captured when the sample enters trend storage.
+    # This is intentionally independent from an archived frame's source UTC.
+    position_seconds: float | None = None
+
+
+def _trend_metric_values(result: AerationResult) -> tuple[tuple[str, float | None], ...]:
+    """Stable metric codes persisted with each sample and exposed by Trends."""
+    values: list[tuple[str, float | None]] = [
+        ("rr_bpm", result.respiratory_rate_bpm),
+        ("tvi_au", result.tvi_au),
+        ("mvi_au_per_min", result.minute_ventilation_au_per_min),
+        ("eeli_au", result.eeli_au),
+        ("eili_au", result.eili_au),
+        ("right_percent", result.right_percent),
+        ("left_percent", result.left_percent),
+        ("right_left_ratio", result.right_left_ratio),
+        ("ventral_dorsal_ratio", result.ventral_dorsal_ratio),
+    ]
+    values.extend(
+        (f"roi_{index}_tvi_au", value)
+        for index, value in enumerate(result.roi_tvi_au, start=1)
+    )
+    values.extend(
+        (f"roi_{index}_percent", value)
+        for index, value in enumerate(result.roi_percent, start=1)
+    )
+    return tuple(values)
 
 
 class MonitoringData(Protocol):
@@ -107,9 +154,12 @@ class MonitoringService:
         event_bus: EventBus,
         *,
         settings: AcquisitionSettings | None = None,
-        buffer_seconds: int = 90,
+        buffer_seconds: int = 120,
         roi_count: int = 8,
-        peak_detection_method: str = "derivative",
+        peak_detection_method: str = "mad_mean",
+        peep_silent_threshold_percent: int = 10,
+        peep_analysis_interval_seconds: int = 15,
+        peep_gravity_angle_degrees: int = 0,
     ) -> None:
         self._source = source
         self._event_bus = event_bus
@@ -126,6 +176,13 @@ class MonitoringService:
             ),
             capacity=capacity,
         )
+        self._peep = PeepProcessor(
+            sample_rate_hz=self._settings.sample_rate_hz,
+            capacity=capacity,
+            silent_threshold_percent=peep_silent_threshold_percent,
+            analysis_interval_seconds=peep_analysis_interval_seconds,
+            gravity_angle_degrees=peep_gravity_angle_degrees,
+        )
         self._raw_reconstructor = RawFrameReconstructor(self._settings)
         self._lock = RLock()
         self._started = False
@@ -133,6 +190,7 @@ class MonitoringService:
         self._latest_reconstructed_frame: EITFrame | None = None
         self._pipeline: AcquisitionPipeline | None = None
         self._frame_handlers: list[Callable[[SourceFrame], None]] = []
+        self._trend_sample_handlers: list[Callable[[TrendSample], None]] = []
         self._mode = MonitoringMode.LIVE
         self._last_frame_monotonic: float | None = None
         self._prime_reconstruction_reference()
@@ -189,6 +247,20 @@ class MonitoringService:
             with self._lock:
                 if handler in self._frame_handlers:
                     self._frame_handlers.remove(handler)
+
+        return unsubscribe
+
+    def subscribe_trend_samples(
+        self, handler: Callable[[TrendSample], None]
+    ) -> Callable[[], None]:
+        """Subscribe to reconstructed/filtered samples without changing raw recording."""
+        with self._lock:
+            self._trend_sample_handlers.append(handler)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if handler in self._trend_sample_handlers:
+                    self._trend_sample_handlers.remove(handler)
 
         return unsubscribe
 
@@ -427,6 +499,7 @@ class MonitoringService:
             return {
                 "time": waves["time"].copy(),
                 "global": waves["global"].copy(),
+                "velocity": waves["velocity"].copy(),
                 "rois": [values.copy() for values in waves["rois"]],
             }
 
@@ -437,6 +510,20 @@ class MonitoringService:
         with self._lock:
             self._aeration.configure_analysis(
                 window_seconds=window_seconds, cycle_count=cycle_count
+            )
+
+    def configure_peep_analysis(
+        self,
+        *,
+        silent_threshold_percent: int,
+        analysis_interval_seconds: int,
+        gravity_angle_degrees: int,
+    ) -> None:
+        with self._lock:
+            self._peep.configure(
+                silent_threshold_percent=silent_threshold_percent,
+                analysis_interval_seconds=analysis_interval_seconds,
+                gravity_angle_degrees=gravity_angle_degrees,
             )
 
     def read_view(self, window_sec: float = DISPLAY_WINDOW_SEC) -> MonitoringView:
@@ -451,6 +538,7 @@ class MonitoringService:
     def snapshot(self) -> MonitoringSnapshot:
         with self._lock:
             result = self._aeration.result()
+            peep_result = self._peep.result()
             stream_state = self._stream_state_locked()
             reconstruction_map = (
                 self._latest_reconstructed_frame.reconstructed_delta_z
@@ -523,13 +611,15 @@ class MonitoringService:
                 interval_end_seconds=result.interval_end_seconds,
                 analyzed_sample_count=result.analyzed_sample_count,
                 algorithm_parameters=result.parameters,
+                peep=peep_result,
                 roi_pct=result.roi_percent,
-                roi_trends=(0.0,) * self._roi_count,
+                roi_trends=(None,) * self._roi_count,
             )
 
         roi_pct = result.roi_percent
 
         selection_window, _ = self._aeration.analysis_selection
+        trends_available = result.quality in {DataQuality.VALID, DataQuality.DEGRADED}
         return MonitoringSnapshot(
             rr=result.respiratory_rate_bpm,
             t_pct=100.0 if result.available else None,
@@ -540,14 +630,23 @@ class MonitoringService:
             eeli=result.eeli_au,
             eili=result.eili_au,
             tvi=result.tvi_au,
+            mvi=result.minute_ventilation_au_per_min,
             phase=result.phase,
             roi_pct=roi_pct,
             reconstruction_map=reconstruction_map,
             absolute_conductivity_map=absolute_conductivity_map,
-            trend_global=_trend(global_values),
-            trend_r=_trend(_mean_channels(roi_values[:self._roi_count // 2])),
-            trend_l=_trend(_mean_channels(roi_values[self._roi_count // 2:])),
-            roi_trends=tuple(_trend(values) for values in roi_values),
+            trend_global=_trend(global_values) if trends_available else None,
+            trend_r=(
+                _trend(_mean_channels(roi_values[:self._roi_count // 2]))
+                if trends_available else None
+            ),
+            trend_l=(
+                _trend(_mean_channels(roi_values[self._roi_count // 2:]))
+                if trends_available else None
+            ),
+            roi_trends=tuple(
+                _trend(values) if trends_available else None for values in roi_values
+            ),
             quality=result.quality,
             quality_reason=result.quality_reason,
             algorithm_version=result.algorithm_version,
@@ -560,6 +659,7 @@ class MonitoringService:
             interval_end_seconds=result.interval_end_seconds,
             analyzed_sample_count=result.analyzed_sample_count,
             algorithm_parameters=result.parameters,
+            peep=peep_result,
         )
 
     def _publish_state(self) -> None:
@@ -602,6 +702,7 @@ class MonitoringService:
         capacity = max(1, int(self._buffer_seconds * self._settings.sample_rate_hz))
         with self._lock:
             self._aeration.reset()
+            self._peep.reset()
             self._raw_reconstructor.reset()
             self._prime_reconstruction_reference()
             self._latest_frame = None
@@ -618,6 +719,7 @@ class MonitoringService:
             self._pipeline.stop()
 
     def _accept_frame(self, frame: SourceFrame) -> None:
+        trend_sample = None
         with self._lock:
             self._latest_frame = frame
             self._last_frame_monotonic = time.monotonic()
@@ -639,10 +741,43 @@ class MonitoringService:
                     ) from exc
             if reconstructed is not None:
                 self._latest_reconstructed_frame = reconstructed
-                self._aeration.process(reconstructed)
+                self._peep.process(
+                    reconstructed.reconstructed_delta_z,
+                    reconstructed.global_impedance,
+                )
+                processed = self._aeration.process(reconstructed)
+                analysis = self._aeration.result()
+                if processed is None:
+                    trend_sample = TrendSample(
+                        sequence_number=reconstructed.sequence_number,
+                        timestamp_utc=reconstructed.timestamp_utc,
+                        global_value=None,
+                        roi_values=(None,) * self._roi_count,
+                        quality=self._aeration.quality,
+                        quality_reason=self._aeration.quality_reason,
+                        phase=analysis.phase,
+                        respiratory_rate_bpm=analysis.respiratory_rate_bpm,
+                        metric_values=_trend_metric_values(analysis),
+                    )
+                else:
+                    trend_sample = TrendSample(
+                        sequence_number=processed.sequence_number,
+                        timestamp_utc=reconstructed.timestamp_utc,
+                        global_value=processed.global_impedance,
+                        roi_values=tuple(processed.roi_impedance),
+                        quality=analysis.quality,
+                        quality_reason=analysis.quality_reason,
+                        phase=analysis.phase,
+                        respiratory_rate_bpm=analysis.respiratory_rate_bpm,
+                        metric_values=_trend_metric_values(analysis),
+                    )
             handlers = tuple(self._frame_handlers)
+            trend_handlers = tuple(self._trend_sample_handlers)
         for handler in handlers:
             handler(frame)
+        if trend_sample is not None:
+            for handler in trend_handlers:
+                handler(trend_sample)
         self._event_bus.publish(
             ApplicationEvent(
                 EventType.FRAME_RECEIVED,
@@ -673,12 +808,23 @@ class MonitoringService:
         return "frozen" if self._started else "empty"
 
 
-def _trend(values: np.ndarray, window: int = 50) -> float:
-    if values.size < 2:
+def _trend(values: np.ndarray, window: int = DISPLAY_SAMPLES) -> float:
+    """Robust level change across the visible window, resistant to breath phase."""
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size < 2:
         return 0.0
-    selected = values[-window:]
-    base = max(abs(float(selected[0])), 0.05)
-    return float(np.clip((float(selected[-1]) - float(selected[0])) / base * 100.0, -99.0, 99.0))
+    selected = finite[-window:]
+    x = np.linspace(0.0, 1.0, selected.size)
+    start = float(np.median(selected[:max(1, selected.size // 4)]))
+    centered_x = x - float(np.mean(x))
+    level_change = float(
+        np.dot(centered_x, selected - float(np.mean(selected)))
+        / np.dot(centered_x, centered_x)
+    )
+    amplitude = float(np.ptp(selected))
+    base = max(abs(start), amplitude, 0.05)
+    return float(np.clip(level_change / base * 100.0, -99.0, 99.0))
 
 
 def _mean_channels(channels: list[np.ndarray]) -> np.ndarray:

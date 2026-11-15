@@ -1,5 +1,8 @@
 import os
 import unittest
+from types import SimpleNamespace
+
+import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -8,12 +11,17 @@ from PySide6.QtGui import QImage
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-from app.application import EventBus, MonitoringService, MonitoringSnapshot, MonitoringView
+from app.application import (
+    EngineeringSettings, EngineeringSettingsService, EventBus, MonitoringService,
+    MonitoringSnapshot, MonitoringView,
+)
 from app.data_sources import SimulationDataSource
 from app.domain import DataQuality
 from app.screens.main_screen import MainScreen
 from app.widgets.lung_viz import LungVizWidget
-from app.widgets.waveform_panel import RegionalWaveformPanel, WaveformPanel
+from app.widgets.waveform_panel import (
+    RegionalWaveformPanel, WaveformPanel, _relative_markers,
+)
 
 
 class StaticMonitoring:
@@ -33,6 +41,17 @@ class StaticMonitoring:
         return self.view
 
 
+class MemorySettingsRepository:
+    def __init__(self):
+        self.values = {}
+
+    def load(self):
+        return dict(self.values)
+
+    def save(self, values):
+        self.values.update(values)
+
+
 class LiveMonitoringViewTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -50,6 +69,8 @@ class LiveMonitoringViewTest(unittest.TestCase):
             live = service.read_view(window_sec=2.0)
             self.assertEqual(live.snapshot.stream_state, "live")
             self.assertEqual(live.waveforms["global"].size, 50)
+            self.assertEqual(live.waveforms["velocity"].size, 50)
+            self.assertTrue(np.all(np.isfinite(live.waveforms["velocity"])))
             self.assertEqual(live.waveforms["global"].size, live.waveforms["rois"][0].size)
             self.assertEqual(len(live.snapshot.reconstruction_map), 64)
             self.assertEqual(len(live.snapshot.reconstruction_map[0]), 64)
@@ -77,7 +98,18 @@ class LiveMonitoringViewTest(unittest.TestCase):
         finally:
             service.stop()
 
-    def test_main_screen_uses_one_configurable_atomic_view_and_shows_quality(self):
+    def test_default_monitoring_buffer_allocates_full_120_second_window(self):
+        service = MonitoringService(
+            SimulationDataSource(seed=23, playback_speed=100.0),
+            EventBus(),
+        )
+        try:
+            self.assertEqual(service._buffer_seconds, 120)
+            self.assertEqual(service._aeration._capacity, 3000)
+        finally:
+            service.stop()
+
+    def test_main_screen_uses_one_configurable_atomic_view_and_ignores_quality(self):
         empty = {"time": [], "global": [], "rois": [[] for _ in range(8)]}
         monitoring = StaticMonitoring(MonitoringView(
             snapshot=MonitoringSnapshot(
@@ -90,11 +122,27 @@ class LiveMonitoringViewTest(unittest.TestCase):
         screen = MainScreen(monitoring, display_window_sec=12.5)
         try:
             self.assertEqual(monitoring.requested_windows, [12.5])
-            self.assertIn("низкое качество", screen._quality_banner.text())
-            self.assertIn("источник сообщил низкое качество", screen._quality_banner.toolTip())
+            self.assertIn("качество в норме", screen._quality_banner.text())
+            self.assertNotIn("источник сообщил низкое качество", screen._quality_banner.toolTip())
             self.assertNotIn("source_quality_degraded", screen._quality_banner.toolTip())
             screen._on_paint()
             self.assertEqual(monitoring.requested_windows, [12.5, 12.5])
+        finally:
+            screen.close()
+
+    def test_main_screen_applies_saved_graph_display_period_immediately(self):
+        empty = {"time": [], "global": [], "rois": [[] for _ in range(8)]}
+        monitoring = StaticMonitoring(MonitoringView(
+            snapshot=MonitoringSnapshot(),
+            waveforms=empty,
+        ))
+        settings = EngineeringSettingsService(MemorySettingsRepository(), EventBus())
+        screen = MainScreen(monitoring, engineering_settings=settings)
+        try:
+            self.assertEqual(monitoring.requested_windows, [60.0])
+            settings.save(EngineeringSettings(graph_display_period_seconds=90))
+            screen._on_paint()
+            self.assertEqual(monitoring.requested_windows[-1], 90.0)
         finally:
             screen.close()
 
@@ -126,9 +174,35 @@ class LiveMonitoringViewTest(unittest.TestCase):
             self.assertTrue(widget.patient_left_is_screen_left)
             self.assertEqual(widget.delta_color_limit, fixed_limit)
             self.assertEqual(widget.rendered_element_count, 64 * 64)
+            self.assertEqual(
+                widget.roi_grid_labels,
+                (
+                    ("ROI_5", "ROI_1"),
+                    ("ROI_6", "ROI_2"),
+                    ("ROI_7", "ROI_3"),
+                    ("ROI_8", "ROI_4"),
+                ),
+            )
             self.assertFalse(image.isNull())
             QTest.mouseClick(widget, Qt.LeftButton)
             self.assertEqual(widget.display_mode, "delta")
+        finally:
+            widget.close()
+
+    def test_reconstruction_roi_grid_tracks_configured_even_roi_count(self):
+        widget = LungVizWidget()
+        try:
+            widget.update_state(0.5, (10.0,) * 10)
+            self.assertEqual(
+                widget.roi_grid_labels,
+                (
+                    ("ROI_6", "ROI_1"),
+                    ("ROI_7", "ROI_2"),
+                    ("ROI_8", "ROI_3"),
+                    ("ROI_9", "ROI_4"),
+                    ("ROI_10", "ROI_5"),
+                ),
+            )
         finally:
             widget.close()
 
@@ -157,6 +231,62 @@ class LiveMonitoringViewTest(unittest.TestCase):
         finally:
             regional.close()
             dense.close()
+
+    def test_expanded_global_metrics_are_doubled_and_stacked_vertically(self):
+        panel = WaveformPanel(show_regional=False, expand_global=True)
+        try:
+            panel.resize(1000, 700)
+            panel.show()
+            self.app.processEvents()
+            row = panel.row_global
+            boxes = (row.rr_box, row.pct_box, row.trend_box)
+            self.assertEqual([box.height() for box in boxes], [136, 136, 136])
+            self.assertEqual([box.width() for box in boxes], [192, 192, 192])
+            self.assertLess(row.rr_box.y(), row.pct_box.y())
+            self.assertLess(row.pct_box.y(), row.trend_box.y())
+            self.assertLessEqual(
+                abs(
+                    (row.metrics_stack.y() + row.metrics_stack.height() / 2)
+                    - row.height() / 2
+                ),
+                2.0,
+            )
+        finally:
+            panel.close()
+
+    def test_waveform_panel_shows_current_monitoring_moment_on_time_bar(self):
+        panel = WaveformPanel(show_regional=False, expand_global=True)
+        try:
+            times = np.asarray([65.0, 66.0, 67.0])
+            signal = np.asarray([1.0, 2.0, 1.5])
+            panel.update_all(
+                {"time": times, "global": signal, "rois": [signal] * 8},
+                15.0,
+                [12.5] * 8,
+            )
+            panel.resize(1000, 700)
+            panel.show()
+            self.app.processEvents()
+
+            bar = panel.monitoring_moment_bar
+            self.assertEqual(bar.start_seconds, 65.0)
+            self.assertEqual(bar.current_seconds, 67.0)
+            image = bar.grab().toImage()
+            self.assertFalse(image.isNull())
+        finally:
+            panel.close()
+
+    def test_new_event_at_filter_boundary_remains_visible_on_waveform(self):
+        marker = SimpleNamespace(position_seconds=0.25, event_type="cough")
+
+        self.assertEqual(
+            _relative_markers((marker,), (0.0,)),
+            ((1.0, "cough"),),
+        )
+        self.assertEqual(
+            _relative_markers((marker,), (0.28, 0.32)),
+            ((0.0, "cough"),),
+        )
 
 
 if __name__ == "__main__":

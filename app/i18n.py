@@ -393,6 +393,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "趋势",
         "vi": "Xu hướng",
     },
+    "wave_monitoring_moment": {
+        "ru": "Текущий момент",
+        "en": "Current moment",
+        "zh": "当前时刻",
+        "vi": "Thời điểm hiện tại",
+    },
 
     # ── Left panel / parameters ────────────────────────────────────────────
     "param_eit_duration": {
@@ -1019,6 +1025,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "时间（分钟）",
         "vi": "Thời gian, phút",
     },
+    "trends_time": {
+        "ru": "Время",
+        "en": "Time",
+        "zh": "时间",
+        "vi": "Thời gian",
+    },
     "trends_btn_scale": {
         "ru": "Масштаб",
         "en": "Scale",
@@ -1095,6 +1107,97 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Инженерный режим", "en": "Engineering mode",
         "zh": "工程模式", "vi": "Chế độ kỹ thuật",
     },
+    "sys_engineering_tab_general": {
+        "ru": "Основные", "en": "General", "zh": "基本设置", "vi": "Chung",
+    },
+    "sys_engineering_tab_visibility": {
+        "ru": "Вкладки", "en": "Tabs", "zh": "选项卡", "vi": "Thẻ",
+    },
+    "sys_engineering_tab_peep": {
+        "ru": "PEEP", "en": "PEEP", "zh": "PEEP", "vi": "PEEP",
+    },
+    "sys_engineering_navigation_visibility": {
+        "ru": "Вкладки интерфейса", "en": "Interface tabs",
+        "zh": "界面选项卡", "vi": "Các thẻ giao diện",
+    },
+    "sys_engineering_main_visibility": {
+        "ru": "Информация на главной странице", "en": "Main page information",
+        "zh": "主页信息", "vi": "Thông tin trang chính",
+    },
+    "sys_engineering_show_main_trends": {
+        "ru": "Отображать тренды", "en": "Show trends",
+        "zh": "显示趋势", "vi": "Hiển thị xu hướng",
+    },
+    "sys_engineering_show_main_tvi": {
+        "ru": "Отображать приливную вентиляцию (TVi)",
+        "en": "Show tidal ventilation (TVi)",
+        "zh": "显示潮气通气量 (TVi)",
+        "vi": "Hiển thị thông khí khí lưu thông (TVi)",
+    },
+    "sys_engineering_element_visibility": {
+        "ru": "Элементы каждой вкладки", "en": "Elements on each tab",
+        "zh": "各选项卡元素", "vi": "Các phần tử trên mỗi thẻ",
+    },
+    "sys_engineering_configured_tab": {
+        "ru": "Настраиваемая вкладка", "en": "Configured tab",
+        "zh": "配置选项卡", "vi": "Thẻ được cấu hình",
+    },
+    "sys_element_main_quality": {"ru":"Индикатор качества сигнала","en":"Signal quality indicator","zh":"信号质量指示器","vi":"Chỉ báo chất lượng tín hiệu"},
+    "sys_element_main_lung_map": {"ru":"Карта лёгких","en":"Lung map","zh":"肺部图","vi":"Bản đồ phổi"},
+    "sys_element_main_total": {"ru":"Показатель T","en":"T value","zh":"T 指标","vi":"Chỉ số T"},
+    "sys_element_main_regional": {"ru":"Показатели R и L","en":"R and L values","zh":"R 和 L 指标","vi":"Chỉ số R và L"},
+    "sys_element_main_rl": {"ru":"Отображать R/L","en":"Show R/L","zh":"显示 R/L","vi":"Hiển thị R/L"},
+    "sys_element_main_vd": {"ru":"Отображать V/D","en":"Show V/D","zh":"显示 V/D","vi":"Hiển thị V/D"},
+    "sys_element_main_tvi": {"ru":"Отображать TVi","en":"Show TVi","zh":"显示 TVi","vi":"Hiển thị TVi"},
+    "sys_element_main_eeli": {"ru":"Отображать EELI","en":"Show EELI","zh":"显示 EELI","vi":"Hiển thị EELI"},
+    "sys_element_main_eili": {"ru":"Отображать EILI","en":"Show EILI","zh":"显示 EILI","vi":"Hiển thị EILI"},
+    "sys_element_main_mvi": {"ru":"Отображать MVi","en":"Show MVi","zh":"显示 MVi","vi":"Hiển thị MVi"},
+    "sys_element_main_global_waveform": {"ru":"Кривые глобальной аэрации","en":"Global aeration waveforms","zh":"全局通气曲线","vi":"Đường cong thông khí toàn thể"},
+    "sys_element_main_velocity": {"ru":"График скорости V = dZ/dt","en":"Velocity chart V = dZ/dt","zh":"速度图 V = dZ/dt","vi":"Biểu đồ vận tốc V = dZ/dt"},
+    "sys_element_main_regional_waveforms": {"ru":"Кривые регионарной вентиляции","en":"Regional ventilation waveforms","zh":"区域通气曲线","vi":"Đường cong thông khí khu vực"},
+    "sys_element_main_respiratory_rate": {"ru":"Частота дыханий","en":"Respiratory rate","zh":"呼吸频率","vi":"Tần số thở"},
+    "sys_element_main_trends": {"ru":"Тренды","en":"Trends","zh":"趋势","vi":"Xu hướng"},
+    "sys_element_main_controls": {"ru":"Кнопки и счётчики исследования","en":"Study controls and counters","zh":"检查控件和计时器","vi":"Điều khiển và bộ đếm nghiên cứu"},
+    "sys_element_patient_card": {"ru":"Карточка пациента","en":"Patient card","zh":"患者卡片","vi":"Thẻ bệnh nhân"},
+    "sys_element_patient_clinical": {"ru":"Клинические данные","en":"Clinical data","zh":"临床数据","vi":"Dữ liệu lâm sàng"},
+    "sys_element_patient_history": {"ru":"История исследований","en":"Study history","zh":"检查历史","vi":"Lịch sử nghiên cứu"},
+    "sys_element_patient_controls": {"ru":"Действия с пациентом","en":"Patient actions","zh":"患者操作","vi":"Thao tác bệnh nhân"},
+    "sys_element_trends_tabs": {"ru":"Вкладки трендов","en":"Trend tabs","zh":"趋势选项卡","vi":"Các thẻ xu hướng"},
+    "sys_element_trends_period": {"ru":"Выбор исследования и периода","en":"Study and period selector","zh":"检查和周期选择","vi":"Chọn nghiên cứu và khoảng thời gian"},
+    "sys_element_trends_charts": {"ru":"Графики и таблицы","en":"Charts and tables","zh":"图表和表格","vi":"Biểu đồ và bảng"},
+    "sys_element_trends_controls": {"ru":"Кнопки управления трендами","en":"Trend controls","zh":"趋势控件","vi":"Điều khiển xu hướng"},
+    "sys_element_analysis_tabs": {"ru":"Вкладки анализа","en":"Analysis tabs","zh":"分析选项卡","vi":"Các thẻ phân tích"},
+    "sys_element_analysis_lung_map": {"ru":"Карта лёгких","en":"Lung map","zh":"肺部图","vi":"Bản đồ phổi"},
+    "sys_element_analysis_metrics": {"ru":"Расчётные показатели","en":"Calculated metrics","zh":"计算指标","vi":"Các chỉ số tính toán"},
+    "sys_element_analysis_waveforms": {"ru":"Кривые анализа","en":"Analysis waveforms","zh":"分析曲线","vi":"Đường cong phân tích"},
+    "sys_element_analysis_classification": {"ru":"Классификация дыхания","en":"Breathing classification","zh":"呼吸分类","vi":"Phân loại hô hấp"},
+    "sys_element_analysis_controls": {"ru":"Кнопки управления анализом","en":"Analysis controls","zh":"分析控件","vi":"Điều khiển phân tích"},
+    "sys_element_analysis_peep_tab": {"ru":"Вкладка PEEP","en":"PEEP tab","zh":"PEEP 选项卡","vi":"Thẻ PEEP"},
+    "sys_element_eit_settings_acquisition": {"ru":"Параметры сбора ЭИТ","en":"EIT acquisition parameters","zh":"EIT 采集参数","vi":"Tham số thu nhận EIT"},
+    "sys_element_eit_settings_visualization": {"ru":"Настройка визуализации","en":"Visualization settings","zh":"可视化设置","vi":"Cài đặt hiển thị"},
+    "sys_element_eit_settings_pathology": {"ru":"Настройка патологии","en":"Pathology settings","zh":"病理设置","vi":"Cài đặt bệnh lý"},
+    "sys_element_eit_settings_diagnosis": {"ru":"Справочник диагнозов","en":"Diagnosis catalogue","zh":"诊断目录","vi":"Danh mục chẩn đoán"},
+    "sys_element_eit_settings_controls": {"ru":"Кнопки настроек ЭИТ","en":"EIT settings controls","zh":"EIT 设置控件","vi":"Điều khiển cài đặt EIT"},
+    "sys_element_reports_saved": {"ru":"Сохранённые отчёты","en":"Saved reports","zh":"已保存报告","vi":"Báo cáo đã lưu"},
+    "sys_element_reports_form": {"ru":"Форма создания отчёта","en":"Report creation form","zh":"报告创建表单","vi":"Biểu mẫu tạo báo cáo"},
+    "sys_element_reports_preview": {"ru":"Предпросмотр отчёта","en":"Report preview","zh":"报告预览","vi":"Xem trước báo cáo"},
+    "sys_element_reports_controls": {"ru":"Кнопки отчётов","en":"Report controls","zh":"报告控件","vi":"Điều khiển báo cáo"},
+    "sys_element_export_format": {"ru":"Формат экспорта","en":"Export format","zh":"导出格式","vi":"Định dạng xuất"},
+    "sys_element_export_categories": {"ru":"Категории данных","en":"Data categories","zh":"数据类别","vi":"Danh mục dữ liệu"},
+    "sys_element_export_history": {"ru":"Выбор исследований","en":"Study selection","zh":"检查选择","vi":"Chọn nghiên cứu"},
+    "sys_element_export_summary": {"ru":"Предупреждение и оценка размера","en":"Warning and size estimate","zh":"警告和大小估计","vi":"Cảnh báo và ước tính kích thước"},
+    "sys_element_export_controls": {"ru":"Кнопки экспорта","en":"Export controls","zh":"导出控件","vi":"Điều khiển xuất"},
+    "sys_element_service_title": {"ru":"Заголовок экрана","en":"Screen title","zh":"屏幕标题","vi":"Tiêu đề màn hình"},
+    "sys_element_service_filters": {"ru":"Фильтры журнала","en":"Log filters","zh":"日志筛选器","vi":"Bộ lọc nhật ký"},
+    "sys_element_service_events": {"ru":"Список событий","en":"Event list","zh":"事件列表","vi":"Danh sách sự kiện"},
+    "sys_element_service_controls": {"ru":"Действия с журналом","en":"Log actions","zh":"日志操作","vi":"Thao tác nhật ký"},
+    "sys_element_system_title": {"ru":"Заголовок экрана","en":"Screen title","zh":"屏幕标题","vi":"Tiêu đề màn hình"},
+    "sys_element_system_information": {"ru":"Таблица системной информации","en":"System information table","zh":"系统信息表","vi":"Bảng thông tin hệ thống"},
+    "sys_element_debug_duration": {"ru":"Счётчики времени","en":"Duration counters","zh":"时长计数器","vi":"Bộ đếm thời gian"},
+    "sys_element_debug_diagram": {"ru":"Схема электродов","en":"Electrode diagram","zh":"电极图","vi":"Sơ đồ điện cực"},
+    "sys_element_debug_chart": {"ru":"График сигналов","en":"Signal chart","zh":"信号图","vi":"Biểu đồ tín hiệu"},
+    "sys_element_debug_status": {"ru":"Статус калибровки","en":"Calibration status","zh":"校准状态","vi":"Trạng thái hiệu chuẩn"},
+    "sys_element_debug_controls": {"ru":"Кнопки отладки","en":"Debug controls","zh":"调试控件","vi":"Điều khiển gỡ lỗi"},
     "sys_engineering_modes": {
         "ru": "Режимы работы", "en": "Operating modes",
         "zh": "工作模式", "vi": "Chế độ vận hành",
@@ -1114,17 +1217,92 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "感兴趣区域 (ROI) 数量：",
         "vi": "Số vùng quan tâm (ROI):",
     },
+    "sys_engineering_graph_period": {
+        "ru": "Период отображения данных на графиках:",
+        "en": "Data display period on charts:",
+        "zh": "图表数据的显示时段：",
+        "vi": "Khoảng thời gian hiển thị dữ liệu trên biểu đồ:",
+    },
+    "sys_engineering_graph_period_value": {
+        "ru": "{seconds} с", "en": "{seconds} s",
+        "zh": "{seconds} 秒", "vi": "{seconds} giây",
+    },
+    "sys_engineering_tab_trends": {
+        "ru": "Тренды", "en": "Trends", "zh": "趋势", "vi": "Xu hướng",
+    },
+    "sys_engineering_trend_point_mode": {
+        "ru": "Источник точек тренда:", "en": "Trend point source:",
+        "zh": "趋势点来源：", "vi": "Nguồn điểm xu hướng:",
+    },
+    "sys_trend_points_interval": {
+        "ru": "Интервалы 15 с (TB)", "en": "15-second intervals (TB)",
+        "zh": "15 秒间隔 (TB)", "vi": "Khoảng 15 giây (TB)",
+    },
+    "sys_trend_points_breath_cycle": {
+        "ru": "Завершённые дыхательные циклы (BB)",
+        "en": "Completed breath cycles (BB)", "zh": "完整呼吸周期 (BB)",
+        "vi": "Chu kỳ thở hoàn chỉnh (BB)",
+    },
+    "sys_engineering_trend_downsampling": {
+        "ru": "Укрупнение длинных диапазонов:",
+        "en": "Long-range aggregation:", "zh": "长范围聚合：",
+        "vi": "Tổng hợp phạm vi dài:",
+    },
+    "sys_trend_downsampling_none": {
+        "ru": "Без укрупнения", "en": "No aggregation", "zh": "不聚合",
+        "vi": "Không tổng hợp",
+    },
+    "sys_trend_downsampling_adult": {
+        "ru": "Медиана по руководству — взрослые",
+        "en": "Manual median — adult", "zh": "手册中位数 — 成人",
+        "vi": "Trung vị theo hướng dẫn — người lớn",
+    },
+    "sys_trend_downsampling_infant": {
+        "ru": "Медиана по руководству — новорождённые",
+        "en": "Manual median — neonatal", "zh": "手册中位数 — 新生儿",
+        "vi": "Trung vị theo hướng dẫn — sơ sinh",
+    },
+    "sys_engineering_trend_configuration_hint": {
+        "ru": "BB использует сохранённые точки завершённых циклов. TB использует 15-секундные агрегаты. Медианное укрупнение применяет коэффициенты руководства для выбранного диапазона времени.",
+        "en": "BB uses persisted completed-cycle points. TB uses 15-second aggregates. Median aggregation applies the manual factors for the selected time range.",
+        "zh": "BB 使用保存的完整周期点。TB 使用 15 秒聚合。中位数聚合按所选时间范围应用手册系数。",
+        "vi": "BB dùng các điểm chu kỳ hoàn chỉnh đã lưu. TB dùng tổng hợp 15 giây. Tổng hợp trung vị áp dụng hệ số hướng dẫn cho khoảng thời gian đã chọn.",
+    },
+    "sys_engineering_peep_threshold": {
+        "ru": "Порог тихих пространств:", "en": "Silent Spaces threshold:",
+        "zh": "静默空间阈值：", "vi": "Ngưỡng vùng im lặng:",
+    },
+    "sys_engineering_peep_interval": {
+        "ru": "Интервал анализа PEEP:", "en": "PEEP analysis interval:",
+        "zh": "PEEP 分析区间：", "vi": "Khoảng phân tích PEEP:",
+    },
+    "sys_engineering_peep_gravity": {
+        "ru": "Направление гравитации (0° вниз):", "en": "Gravity direction (0° down):",
+        "zh": "重力方向（0° 向下）：", "vi": "Hướng trọng lực (0° xuống):",
+    },
+    "sys_engineering_peep_hint": {
+        "ru": "По руководству RTS нормируется к максимальному пиксельному изменению, а значения RTS ≤ 10% относятся к тихим пространствам. Угол нужен для разделения DSS/NSS и координат CoV(v)/CoV(h); при наличии датчика положения его значение должно заменить инженерную установку.",
+        "en": "Per the manual, RTS is normalized to the maximum pixel change and RTS ≤ 10% is classified as Silent Spaces. The angle defines DSS/NSS and CoV(v)/CoV(h); a position sensor should override this engineering setting when available.",
+        "zh": "根据手册，RTS 按最大像素变化归一化，RTS ≤ 10% 归为静默空间。角度用于定义 DSS/NSS 和 CoV(v)/CoV(h)；有位置传感器时应覆盖此工程设置。",
+        "vi": "Theo hướng dẫn, RTS được chuẩn hóa theo thay đổi pixel lớn nhất và RTS ≤ 10% được xếp là vùng im lặng. Góc xác định DSS/NSS và CoV(v)/CoV(h); cảm biến vị trí sẽ thay thế thiết lập này khi có.",
+    },
     "sys_engineering_peak_detector": {
         "ru": "Алгоритм выделения вдоха и выдоха:",
         "en": "Inspiration/expiration detector:",
         "zh": "吸气/呼气检测算法：",
         "vi": "Thuật toán phát hiện hít vào/thở ra:",
     },
+    "sys_peak_detector_mad_mean": {
+        "ru": "MAD-зона и среднее (новый, по умолчанию)",
+        "en": "MAD zone and mean (new, default)",
+        "zh": "MAD 区域与均值（新，默认）",
+        "vi": "Vùng MAD và trung bình (mới, mặc định)",
+    },
     "sys_peak_detector_derivative": {
-        "ru": "По производной (новый, по умолчанию)",
-        "en": "Derivative-based (new, default)",
-        "zh": "基于导数（新，默认）",
-        "vi": "Dựa trên đạo hàm (mới, mặc định)",
+        "ru": "По производной (предыдущий)",
+        "en": "Derivative-based (previous)",
+        "zh": "基于导数（上一版）",
+        "vi": "Dựa trên đạo hàm (phiên bản trước)",
     },
     "sys_peak_detector_legacy": {
         "ru": "По локальным экстремумам (legacy)",
@@ -1496,6 +1674,69 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "2色",
         "vi": "2 màu",
     },
+    "eit_viz_1color": {
+        "ru": "1 цвет", "en": "1 colour", "zh": "1色", "vi": "1 màu",
+    },
+    "eit_color_map_label": {
+        "ru": "Цветовая карта", "en": "Colour map", "zh": "色彩映射", "vi": "Bản đồ màu",
+    },
+    "eit_custom_color_low": {
+        "ru": "Цвет 1", "en": "Colour 1", "zh": "颜色 1", "vi": "Màu 1",
+    },
+    "eit_custom_color_high": {
+        "ru": "Цвет 2", "en": "Colour 2", "zh": "颜色 2", "vi": "Màu 2",
+    },
+    "eit_custom_color": {
+        "ru": "Цвет", "en": "Colour", "zh": "颜色", "vi": "Màu",
+    },
+    "color_map_medical_blue_amber": {
+        "ru": "Медицинская: синий — янтарный", "en": "Medical: blue — amber", "zh": "医疗：蓝色—琥珀色", "vi": "Y khoa: xanh lam — hổ phách",
+    },
+    "color_map_blue_red": {
+        "ru": "Синий — красный", "en": "Blue — red", "zh": "蓝色—红色", "vi": "Xanh lam — đỏ",
+    },
+    "color_map_cyan_orange": {
+        "ru": "Голубой — оранжевый", "en": "Cyan — orange", "zh": "青色—橙色", "vi": "Lục lam — cam",
+    },
+    "color_map_teal_coral": {
+        "ru": "Бирюзовый — коралловый", "en": "Teal — coral", "zh": "蓝绿色—珊瑚色", "vi": "Xanh ngọc — san hô",
+    },
+    "color_map_indigo_yellow": {
+        "ru": "Индиго — жёлтый", "en": "Indigo — yellow", "zh": "靛蓝—黄色", "vi": "Chàm — vàng",
+    },
+    "color_map_purple_lime": {
+        "ru": "Фиолетовый — лайм", "en": "Purple — lime", "zh": "紫色—青柠色", "vi": "Tím — chanh",
+    },
+    "color_map_green_magenta": {
+        "ru": "Зелёный — маджента", "en": "Green — magenta", "zh": "绿色—品红色", "vi": "Xanh lá — đỏ tía",
+    },
+    "color_map_navy_gold": {
+        "ru": "Тёмно-синий — золотой", "en": "Navy — gold", "zh": "海军蓝—金色", "vi": "Xanh hải quân — vàng kim",
+    },
+    "color_map_ice_fire": {
+        "ru": "Лёд — пламя", "en": "Ice — fire", "zh": "冰—火", "vi": "Băng — lửa",
+    },
+    "color_map_emerald_violet": {
+        "ru": "Изумрудный — фиолетовый", "en": "Emerald — violet", "zh": "祖母绿—紫罗兰", "vi": "Lục bảo — tím",
+    },
+    "color_map_sky_rose": {
+        "ru": "Небесный — розовый", "en": "Sky — rose", "zh": "天蓝—玫红", "vi": "Da trời — hồng",
+    },
+    "color_map_mint_ruby": {
+        "ru": "Мятный — рубиновый", "en": "Mint — ruby", "zh": "薄荷色—红宝石色", "vi": "Bạc hà — hồng ngọc",
+    },
+    "color_map_azure_tangerine": {
+        "ru": "Лазурный — мандариновый", "en": "Azure — tangerine", "zh": "天蓝—橘色", "vi": "Xanh da trời — quýt",
+    },
+    "color_map_turquoise_pink": {
+        "ru": "Бирюзовый — розовый", "en": "Turquoise — pink", "zh": "绿松石色—粉色", "vi": "Ngọc lam — hồng",
+    },
+    "color_map_monochrome": {
+        "ru": "Монохромная", "en": "Monochrome", "zh": "单色", "vi": "Đơn sắc",
+    },
+    "color_map_custom": {
+        "ru": "Пользовательская", "en": "Custom", "zh": "自定义", "vi": "Tùy chỉnh",
+    },
     "eit_viz_standard": {
         "ru": "Стандартное",
         "en": "Standard",
@@ -1604,6 +1845,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "区域\n通气",
         "vi": "Thông khí\nKHU VỰC",
     },
+    "analysis_tab_peep": {
+        "ru": "PEEP",
+        "en": "PEEP",
+        "zh": "PEEP",
+        "vi": "PEEP",
+    },
+    "peep_silent_spaces": {"ru":"Тихие пространства","en":"Silent Spaces","zh":"静默空间","vi":"Vùng im lặng"},
+    "peep_horizon": {"ru":"Горизонт вентиляции","en":"Horizon of Ventilation","zh":"通气水平线","vi":"Đường chân trời thông khí"},
+    "peep_center": {"ru":"Центр вентиляции","en":"Center of Ventilation","zh":"通气中心","vi":"Trung tâm thông khí"},
+    "peep_not_available": {"ru":"Недостаточно данных для расчёта PEEP","en":"Not enough data for PEEP calculation","zh":"PEEP 计算数据不足","vi":"Không đủ dữ liệu để tính PEEP"},
     "analysis_interval": {
         "ru": "Интервал", "en": "Interval", "zh": "区间", "vi": "Khoảng",
     },
@@ -1792,6 +2043,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "按类型筛选:",
         "vi": "Lọc theo loại:",
     },
+    "svc_filter_period": {
+        "ru": "Период:",
+        "en": "Period:",
+        "zh": "时间范围:",
+        "vi": "Khoảng thời gian:",
+    },
+    "svc_filter_to": {
+        "ru": "—",
+        "en": "to",
+        "zh": "至",
+        "vi": "đến",
+    },
     "svc_filter_all": {
         "ru": "Все типы",
         "en": "All types",
@@ -1913,6 +2176,30 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Current session event log",
         "zh": "当前会话事件记录",
         "vi": "Nhật ký sự kiện phiên hiện tại",
+    },
+    "svc_all_studies_label": {
+        "ru": "Протокол событий всех исследований",
+        "en": "All studies event log",
+        "zh": "所有检查事件记录",
+        "vi": "Nhật ký sự kiện của tất cả nghiên cứu",
+    },
+    "svc_scope_current": {
+        "ru": "Текущее исследование",
+        "en": "Current study",
+        "zh": "当前检查",
+        "vi": "Nghiên cứu hiện tại",
+    },
+    "svc_scope_all": {
+        "ru": "Все исследования",
+        "en": "All studies",
+        "zh": "所有检查",
+        "vi": "Tất cả nghiên cứu",
+    },
+    "svc_study_ref": {
+        "ru": "Исследование",
+        "en": "Study",
+        "zh": "检查",
+        "vi": "Nghiên cứu",
     },
 
     # ── Language selector dialog ────────────────────────────────────────────

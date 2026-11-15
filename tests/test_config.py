@@ -20,18 +20,18 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(config.data_mode, DataMode.FROMFILE)
         self.assertEqual(
             config.fromfile_path,
-            Path("examples/fromfile/2x_circle_r0.15_20260608_211810.json"),
+            Path("examples/fromfile/test_2.json"),
         )
         self.assertEqual(config.database_path, Path("data/fromfile/eit.sqlite3"))
         self.assertEqual(config.raw_data_dir, Path("data/fromfile/frames"))
         self.assertEqual(config.log_path, Path("data/fromfile/logs/eit.jsonl"))
         source = create_data_source(config)
         self.assertIsInstance(source, JSONMeasurementDataSource)
-        self.assertEqual(len(source.recording.frames), 1)
+        self.assertEqual(len(source.recording.frames), 244)
         self.assertEqual(len(source.recording.frames[0].channel_values), 208)
-        self.assertEqual(len(source.reconstruction_reference_frames), 3)
+        self.assertEqual(len(source.reconstruction_reference_frames), 25)
 
-    def test_default_single_frame_phantom_builds_and_streams(self):
+    def test_default_recording_builds_and_streams(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             config = AppConfig.from_env({
@@ -139,6 +139,13 @@ class AppConfigTest(unittest.TestCase):
             (looped.timestamp_utc - first.timestamp_utc).total_seconds(),
             len(source.recording.frames) / source.frame_rate_hz,
         )
+        after_loop = source.read_frame()
+        self.assertEqual(after_loop.sequence_number, looped.sequence_number + 1)
+        self.assertAlmostEqual(
+            (after_loop.timestamp_utc - looped.timestamp_utc).total_seconds(),
+            1.0 / source.frame_rate_hz,
+        )
+        self.assertGreater(source.position_seconds, source.duration_seconds)
         source.stop()
         source.disconnect()
         source.connect()

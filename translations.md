@@ -202,6 +202,7 @@
 | `trends_tab_global` | Тренд ГЛОБАЛЬНОЙ аэрации | GLOBAL Aeration Trend | 全局通气趋势 | Xu hướng thông khí TOÀN THỂ |
 | `trends_tab_regional` | Тренд РЕГИОНАРНОЙ аэрации | REGIONAL Aeration Trend | 区域通气趋势 | Xu hướng thông khí KHU VỰC |
 | `trends_table` | Таблица | Table | 表格 | Bảng |
+| `trends_time` | Время | Time | 时间 | Thời gian |
 | `trends_time_hours` | Время, часы | Time, hours | 时间（小时） | Thời gian, giờ |
 | `trends_time_min` | Время, минуты | Time, minutes | 时间（分钟） | Thời gian, phút |
 | `trends_trend` | Тренд | Trend | 趋势 | Xu hướng |
@@ -240,9 +241,30 @@
 | `eit_unit_khz` | кГц | kHz | 千赫 | kHz |
 | `eit_unit_ma` | мА | mA | 毫安 | mA |
 | `eit_unit_pcs` | шт | pcs | 个 | cái |
+| `eit_color_map_label` | Цветовая карта | Colour map | 色彩映射 | Bản đồ màu |
+| `eit_custom_color_low` | Цвет 1 | Colour 1 | 颜色 1 | Màu 1 |
+| `eit_custom_color_high` | Цвет 2 | Colour 2 | 颜色 2 | Màu 2 |
+| `eit_custom_color` | Цвет | Colour | 颜色 | Màu |
+| `eit_viz_1color` | 1 цвет | 1 colour | 1色 | 1 màu |
 | `eit_viz_2colors` | 2 цвета | 2 colours | 2色 | 2 màu |
 | `eit_viz_color_label` | Задание цвета динамической визуализации дыхательного цикла | Colour mode of breathing cycle dynamic visualisation | 呼吸周期动态 可视化颜色设置 | Màu sắc hình ảnh động của chu kỳ thở |
 | `eit_viz_standard` | Стандартное | Standard | 标准 | Tiêu chuẩn |
+| `color_map_medical_blue_amber` | Медицинская: синий — янтарный | Medical: blue — amber | 医疗：蓝色—琥珀色 | Y khoa: xanh lam — hổ phách |
+| `color_map_blue_red` | Синий — красный | Blue — red | 蓝色—红色 | Xanh lam — đỏ |
+| `color_map_cyan_orange` | Голубой — оранжевый | Cyan — orange | 青色—橙色 | Lục lam — cam |
+| `color_map_teal_coral` | Бирюзовый — коралловый | Teal — coral | 蓝绿色—珊瑚色 | Xanh ngọc — san hô |
+| `color_map_indigo_yellow` | Индиго — жёлтый | Indigo — yellow | 靛蓝—黄色 | Chàm — vàng |
+| `color_map_purple_lime` | Фиолетовый — лайм | Purple — lime | 紫色—青柠色 | Tím — chanh |
+| `color_map_green_magenta` | Зелёный — маджента | Green — magenta | 绿色—品红色 | Xanh lá — đỏ tía |
+| `color_map_navy_gold` | Тёмно-синий — золотой | Navy — gold | 海军蓝—金色 | Xanh hải quân — vàng kim |
+| `color_map_ice_fire` | Лёд — пламя | Ice — fire | 冰—火 | Băng — lửa |
+| `color_map_emerald_violet` | Изумрудный — фиолетовый | Emerald — violet | 祖母绿—紫罗兰 | Lục bảo — tím |
+| `color_map_sky_rose` | Небесный — розовый | Sky — rose | 天蓝—玫红 | Da trời — hồng |
+| `color_map_mint_ruby` | Мятный — рубиновый | Mint — ruby | 薄荷色—红宝石色 | Bạc hà — hồng ngọc |
+| `color_map_azure_tangerine` | Лазурный — мандариновый | Azure — tangerine | 天蓝—橘色 | Xanh da trời — quýt |
+| `color_map_turquoise_pink` | Бирюзовый — розовый | Turquoise — pink | 绿松石色—粉色 | Ngọc lam — hồng |
+| `color_map_monochrome` | Монохромная | Monochrome | 单色 | Đơn sắc |
+| `color_map_custom` | Пользовательская | Custom | 自定义 | Tùy chỉnh |
 | **Экран «Экспорт данных»** | | | | |
 | `exp_btn_details` | Подробнее | Details | 详情 | Chi tiết |
 | `exp_btn_generate` | Сформировать | Generate | 生成 | Tạo |
@@ -271,6 +293,7 @@
 | `rep_saved_reports` | Сохранённые отчёты | Saved reports | 已保存报告 | Báo cáo đã lưu |
 | **Экран «Служебная информация»** | | | | |
 | `svc_btn_add` | + Добавить событие | + Add event | + 添加事件 | + Thêm sự kiện |
+| `svc_all_studies_label` | Протокол событий всех исследований | All studies event log | 所有检查事件记录 | Nhật ký sự kiện của tất cả nghiên cứu |
 | `svc_btn_reset_filter` | Сбросить | Reset | 重置 | Đặt lại |
 | `svc_col_datetime` | Дата / Время | Date / Time | 日期 / 时间 | Ngày / Giờ |
 | `svc_col_desc` | Описание | Description | 描述 | Mô tả |
@@ -284,9 +307,14 @@
 | `svc_dlg_title` | Добавить событие | Add event | 添加事件 | Thêm sự kiện |
 | `svc_dlg_type` | Тип события: | Event type: | 事件类型: | Loại sự kiện: |
 | `svc_filter_all` | Все типы | All types | 所有类型 | Tất cả loại |
+| `svc_filter_period` | Период: | Period: | 时间范围: | Khoảng thời gian: |
+| `svc_filter_to` | — | to | 至 | đến |
 | `svc_filter_type` | Фильтр по типу: | Filter by type: | 按类型筛选: | Lọc theo loại: |
 | `svc_no_events` | Нет зарегистрированных событий | No events recorded | 暂无记录事件 | Không có sự kiện nào |
+| `svc_scope_all` | Все исследования | All studies | 所有检查 | Tất cả nghiên cứu |
+| `svc_scope_current` | Текущее исследование | Current study | 当前检查 | Nghiên cứu hiện tại |
 | `svc_session_label` | Протокол событий текущего сеанса | Current session event log | 当前会话事件记录 | Nhật ký sự kiện phiên hiện tại |
+| `svc_study_ref` | Исследование | Study | 检查 | Nghiên cứu |
 | `svc_type_adverse_event` | Неблагоприятное событие | Adverse event | 不良事件 | Sự kiện bất lợi |
 | `svc_type_adverse_phenom` | Неблагоприятное явление | Adverse phenomenon | 不良现象 | Hiện tượng bất lợi |
 | `svc_type_operator_note` | Замечание оператора | Operator note | 操作员备注 | Ghi chú của thao tác viên |
@@ -309,6 +337,19 @@
 | `sq_status_waiting` | Ожидание данных диагностики электродов | Waiting for electrode diagnostics | 正在等待电极诊断数据 | Đang chờ dữ liệu chẩn đoán điện cực |
 | **Экран «Системная информация»** | | | | |
 | `sys_device_id` | ID устройства: | Device ID: | 设备ID: | ID thiết bị: |
+| `sys_element_main_mvi` | Отображать MVi | Show MVi | 显示 MVi | Hiển thị MVi |
+| `sys_engineering_graph_period` | Период отображения данных на графиках: | Data display period on charts: | 图表数据的显示时段： | Khoảng thời gian hiển thị dữ liệu trên biểu đồ: |
+| `sys_engineering_graph_period_value` | {seconds} с | {seconds} s | {seconds} 秒 | {seconds} giây |
+| `sys_engineering_tab_trends` | Тренды | Trends | 趋势 | Xu hướng |
+| `sys_engineering_trend_point_mode` | Источник точек тренда: | Trend point source: | 趋势点来源： | Nguồn điểm xu hướng: |
+| `sys_trend_points_interval` | Интервалы 15 с (TB) | 15-second intervals (TB) | 15 秒间隔 (TB) | Khoảng 15 giây (TB) |
+| `sys_trend_points_breath_cycle` | Завершённые дыхательные циклы (BB) | Completed breath cycles (BB) | 完整呼吸周期 (BB) | Chu kỳ thở hoàn chỉnh (BB) |
+| `sys_engineering_trend_downsampling` | Укрупнение длинных диапазонов: | Long-range aggregation: | 长范围聚合： | Tổng hợp phạm vi dài: |
+| `sys_trend_downsampling_none` | Без укрупнения | No aggregation | 不聚合 | Không tổng hợp |
+| `sys_trend_downsampling_adult` | Медиана по руководству — взрослые | Manual median — adult | 手册中位数 — 成人 | Trung vị theo hướng dẫn — người lớn |
+| `sys_trend_downsampling_infant` | Медиана по руководству — новорождённые | Manual median — neonatal | 手册中位数 — 新生儿 | Trung vị theo hướng dẫn — sơ sinh |
+| `sys_engineering_trend_configuration_hint` | BB использует сохранённые точки завершённых циклов. TB использует 15-секундные агрегаты. Медианное укрупнение применяет коэффициенты руководства для выбранного диапазона времени. | BB uses persisted completed-cycle points. TB uses 15-second aggregates. Median aggregation applies the manual factors for the selected time range. | BB 使用保存的完整周期点。TB 使用 15 秒聚合。中位数聚合按所选时间范围应用手册系数。 | BB dùng các điểm chu kỳ hoàn chỉnh đã lưu. TB dùng tổng hợp 15 giây. Tổng hợp trung vị áp dụng hệ số hướng dẫn cho khoảng thời gian đã chọn. |
+| `sys_element_main_velocity` | График скорости V = dZ/dt | Velocity chart V = dZ/dt | 速度图 V = dZ/dt | Biểu đồ vận tốc V = dZ/dt |
 | `sys_lang_change_btn` | Изменить язык | Change language | 更改语言 | Thay đổi ngôn ngữ |
 | `sys_lang_current` | Текущий язык: | Current language: | 当前语言: | Ngôn ngữ hiện tại: |
 | `sys_lang_section` | Язык интерфейса | Interface language | 界面语言 | Ngôn ngữ giao diện |

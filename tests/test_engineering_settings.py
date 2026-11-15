@@ -9,11 +9,13 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QValidator
 
 from app.application import (
+    ALL_INTERFACE_ELEMENTS,
     AerationAlgorithmParameters,
     EngineeringSettings,
     EngineeringSettingsService,
     EventBus,
     EventType,
+    INTERFACE_TABS,
     MonitoringService,
     calculate_aeration_metrics,
 )
@@ -44,9 +46,28 @@ class EngineeringSettingsTest(unittest.TestCase):
         events = []
         bus.subscribe(EventType.SETTINGS_CHANGED, events.append)
         service = EngineeringSettingsService(repository, bus)
+        self.assertEqual(service.current.peak_detection_method, "mad_mean")
 
+        visible_tabs = tuple(tab for tab in INTERFACE_TABS if tab != "trends")
+        visible_elements = tuple(
+            element
+            for element in ALL_INTERFACE_ELEMENTS
+            if element not in {"main.trends", "patient.history"}
+        )
         saved = service.save(EngineeringSettings(
-            ("adult", "ventilation"), 4, "legacy"
+            work_modes=("adult", "ventilation"),
+            roi_count=4,
+            peak_detection_method="legacy",
+            visible_tabs=visible_tabs,
+            show_main_trends=False,
+            show_main_tvi=False,
+            visible_elements=visible_elements,
+            graph_display_period_seconds=90,
+            trend_point_mode="breath_cycle",
+            trend_downsampling_mode="manual_infant",
+            peep_silent_threshold_percent=12,
+            peep_analysis_interval_seconds=20,
+            peep_gravity_angle_degrees=30,
         ))
         restored = EngineeringSettingsService(repository, EventBus()).current
 
@@ -54,6 +75,17 @@ class EngineeringSettingsTest(unittest.TestCase):
         self.assertEqual(restored.roi_count, 4)
         self.assertEqual(restored.work_modes, ("adult", "ventilation"))
         self.assertEqual(restored.peak_detection_method, "legacy")
+        self.assertEqual(restored.graph_display_period_seconds, 90)
+        self.assertEqual(restored.trend_point_mode, "breath_cycle")
+        self.assertEqual(restored.trend_downsampling_mode, "manual_infant")
+        self.assertEqual(restored.peep_silent_threshold_percent, 12)
+        self.assertEqual(restored.peep_analysis_interval_seconds, 20)
+        self.assertEqual(restored.peep_gravity_angle_degrees, 30)
+        self.assertEqual(restored.visible_tabs, visible_tabs)
+        self.assertFalse(restored.show_main_trends)
+        self.assertFalse(restored.show_main_tvi)
+        self.assertNotIn("patient.history", restored.visible_elements)
+        self.assertNotIn("main.trends", restored.visible_elements)
         self.assertEqual(len(events), 1)
         for invalid in (0, 1, 3, 22):
             with self.subTest(invalid=invalid):
@@ -61,29 +93,99 @@ class EngineeringSettingsTest(unittest.TestCase):
                     EngineeringSettings(("adult",), invalid)
         with self.assertRaises(ValueError):
             EngineeringSettings((), 8)
+        with self.assertRaises(ValueError):
+            EngineeringSettings(visible_tabs=("main",))
+        with self.assertRaises(ValueError):
+            EngineeringSettings(trend_point_mode="unknown")
+        with self.assertRaises(ValueError):
+            EngineeringSettings(trend_downsampling_mode="unknown")
+        for invalid in (9, 121, 10.5, True):
+            with self.subTest(graph_display_period_seconds=invalid):
+                with self.assertRaises(ValueError):
+                    EngineeringSettings(graph_display_period_seconds=invalid)
 
     def test_system_information_engineering_tab_prevents_zero_modes(self):
         repository = MemorySettingsRepository()
         service = EngineeringSettingsService(repository, EventBus())
         screen = SystemInfoScreen(engineering_settings=service)
         try:
+            self.assertEqual(screen._engineering_sections.tabText(0), "Основные")
+            self.assertEqual(screen._engineering_sections.tabText(1), "Тренды")
+            self.assertEqual(screen._engineering_sections.tabText(2), "PEEP")
+            self.assertEqual(screen._engineering_sections.tabText(3), "Вкладки")
+            self.assertEqual(screen._element_visibility_tabs.count(), len(INTERFACE_TABS))
+            self.assertNotIn("\n", screen._element_visibility_selector.itemText(0))
+            self.assertFalse(screen._tab_visibility_checks["main"].isEnabled())
+            self.assertFalse(screen._tab_visibility_checks["system"].isEnabled())
+            self.assertTrue(screen._element_visibility_checks["main.mvi"].isChecked())
             adult = screen._mode_checks["adult"]
             adult.click()
             self.assertTrue(adult.isChecked())
 
             screen._mode_checks["infant"].setChecked(True)
             screen._roi_spin.setValue(4)
+            self.assertEqual(screen._graph_period_slider.minimum(), 10)
+            self.assertEqual(screen._graph_period_slider.maximum(), 120)
+            slider_style = screen._graph_period_slider.styleSheet()
+            self.assertIn("QSlider#graph_period_slider::groove:horizontal", slider_style)
+            self.assertIn("height: 6px", slider_style)
+            screen._graph_period_slider.setValue(90)
+            self.assertEqual(screen._graph_period_value.text(), "90 с")
             screen._peak_detector_combo.setCurrentIndex(
                 screen._peak_detector_combo.findData("legacy")
             )
+            screen._trend_point_mode_combo.setCurrentIndex(
+                screen._trend_point_mode_combo.findData("breath_cycle")
+            )
+            screen._trend_downsampling_combo.setCurrentIndex(
+                screen._trend_downsampling_combo.findData("manual_infant")
+            )
+            screen._peep_threshold_spin.setValue(12)
+            screen._peep_interval_spin.setValue(20)
+            screen._peep_gravity_spin.setValue(30)
+            screen._tab_visibility_checks["trends"].setChecked(False)
+            screen._show_main_trends_check.setChecked(False)
+            screen._show_main_tvi_check.setChecked(False)
+            screen._element_visibility_checks["patient.history"].setChecked(False)
+            screen._element_visibility_checks["main.mvi"].setChecked(False)
             self.assertEqual(screen._roi_spin.validate("3", 1)[0], QValidator.Invalid)
             self.assertEqual(screen._roi_spin.validate("20", 2)[0], QValidator.Acceptable)
             screen._engineering_apply.click()
             self.assertEqual(service.current.roi_count, 4)
             self.assertEqual(service.current.work_modes, ("adult", "infant"))
             self.assertEqual(service.current.peak_detection_method, "legacy")
+            self.assertEqual(service.current.graph_display_period_seconds, 90)
+            self.assertEqual(service.current.trend_point_mode, "breath_cycle")
+            self.assertEqual(
+                service.current.trend_downsampling_mode, "manual_infant"
+            )
+            self.assertEqual(service.current.peep_silent_threshold_percent, 12)
+            self.assertEqual(service.current.peep_analysis_interval_seconds, 20)
+            self.assertEqual(service.current.peep_gravity_angle_degrees, 30)
+            self.assertNotIn("trends", service.current.visible_tabs)
+            self.assertFalse(service.current.show_main_trends)
+            self.assertFalse(service.current.show_main_tvi)
+            self.assertNotIn("patient.history", service.current.visible_elements)
+            self.assertNotIn("main.mvi", service.current.visible_elements)
         finally:
             screen.close()
+
+    def test_existing_visibility_settings_enable_new_mvi_block_during_migration(self):
+        old_payload = EngineeringSettings().to_payload()
+        old_payload.pop("interface_elements_version")
+        old_payload["visible_elements"] = [
+            element
+            for element in old_payload["visible_elements"]
+            if element not in {"main.mvi", "main.velocity", "analysis.peep_tab"}
+        ]
+        service = EngineeringSettingsService(
+            MemorySettingsRepository({"engineering_settings": old_payload}),
+            EventBus(),
+        )
+
+        self.assertIn("main.mvi", service.current.visible_elements)
+        self.assertIn("main.velocity", service.current.visible_elements)
+        self.assertIn("analysis.peep_tab", service.current.visible_elements)
 
     def test_four_roi_metrics_and_waveform_panels_use_four_regions(self):
         fs = 25.0

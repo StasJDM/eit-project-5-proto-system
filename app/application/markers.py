@@ -9,7 +9,7 @@ from uuid import UUID
 from ..domain import Event, EventCategory, StudyStatus, utc_now
 from .events import ApplicationEvent, EventBus, EventType
 from .ports import EventRepository
-from .studies import StudyLifecycleService
+from .studies import DEFAULT_OPERATOR_NAME, StudyLifecycleService
 
 
 MARKER_TYPES = (
@@ -51,11 +51,17 @@ class EventMarkerService:
     @property
     def default_author(self) -> str:
         study = self._lifecycle.current_study
-        return (study.author if study is not None else None) or "local-operator"
+        author = study.author if study is not None else None
+        return DEFAULT_OPERATOR_NAME if not author or author == "local-operator" else author
 
     @property
     def has_current_study(self) -> bool:
         return self._lifecycle.current_study is not None
+
+    @property
+    def current_study_id(self) -> UUID | None:
+        study = self._lifecycle.current_study
+        return None if study is None else study.id
 
     def create(self, event_type: str, description: str, author: str) -> Event:
         study, session = self._active_context()

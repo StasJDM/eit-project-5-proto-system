@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from ..i18n import i18n, t
+from ..color_maps import DEFAULT_COLOR_MAP_ID, resolve_color_map
 from ..styles import C
 
 
@@ -30,6 +31,10 @@ class LungVizWidget(QWidget):
         self._absolute_conductivity: tuple[tuple[float, ...], ...] | None = None
         self._display_mode = "absolute"
         self._color_limit: float | None = None
+        self._two_color_visualization = True
+        self._color_map_id = DEFAULT_COLOR_MAP_ID
+        self._custom_color_low = "#29b6d1"
+        self._custom_color_high = "#ffc857"
         self._rendered_element_count = 0
         self.setToolTip(t("lung_reconstruction_tooltip"))
         i18n.language_changed.connect(self._on_language_changed)
@@ -58,8 +63,43 @@ class LungVizWidget(QWidget):
         """Number of finite elements painted during the most recent render."""
         return self._rendered_element_count
 
+    @property
+    def roi_grid_labels(self) -> tuple[tuple[str, str], ...]:
+        """ROI labels in screen order: patient left, then patient right."""
+        roi_count = len(self._roi_vals)
+        if roi_count < 2 or roi_count % 2:
+            return ()
+        bands = roi_count // 2
+        return tuple(
+            (f"ROI_{bands + row + 1}", f"ROI_{row + 1}")
+            for row in range(bands)
+        )
+
     def _on_language_changed(self, _language: str) -> None:
         self.setToolTip(t("lung_reconstruction_tooltip"))
+        self.update()
+
+    @property
+    def color_map_id(self) -> str:
+        return self._color_map_id
+
+    @property
+    def two_color_visualization(self) -> bool:
+        return self._two_color_visualization
+
+    def set_color_settings(
+        self,
+        *,
+        two_color: bool,
+        color_map_id: str,
+        custom_low: str = "#29b6d1",
+        custom_high: str = "#ffc857",
+    ) -> None:
+        """Apply persisted colour preferences without changing map data."""
+        self._two_color_visualization = bool(two_color)
+        self._color_map_id = color_map_id
+        self._custom_color_low = custom_low
+        self._custom_color_high = custom_high
         self.update()
 
     def update_state(
@@ -132,7 +172,9 @@ class LungVizWidget(QWidget):
         compact = self.width() < 190 or self.height() < 190
         title_h = 22 if compact else 30
         bottom_h = 19 if compact else 27
-        side_margin = 20 if compact else 30
+        roi_label_gutter = 42 if compact else 54
+        roi_line_extension = 7 if compact else 10
+        outer_side_margin = 4 if compact else 8
 
         painter.setPen(QColor(C["text_dim"]))
         painter.setFont(QFont("Arial", 10 if compact else 13, QFont.Bold))
@@ -147,7 +189,8 @@ class LungVizWidget(QWidget):
         )
 
         available_h = max(1, self.height() - title_h - bottom_h)
-        map_size = max(1, min(self.width() - 2 * side_margin, available_h))
+        side_reserve = roi_label_gutter + roi_line_extension + outer_side_margin
+        map_size = max(1, min(self.width() - 2 * side_reserve, available_h))
         map_left = (self.width() - map_size) // 2
         map_top = title_h + (available_h - map_size) // 2
         map_rect = QRectF(map_left, map_top, map_size, map_size)
@@ -157,6 +200,13 @@ class LungVizWidget(QWidget):
         painter.drawRoundedRect(map_rect.adjusted(-3, -3, 3, 3), 7, 7)
 
         self._draw_map(painter, map_rect)
+        self._draw_roi_grid(
+            painter,
+            map_rect,
+            compact,
+            label_gutter=roi_label_gutter,
+            line_extension=roi_line_extension,
+        )
         self._draw_orientation(painter, map_rect, compact)
         self._draw_legend(painter, map_rect, compact)
 
@@ -220,18 +270,93 @@ class LungVizWidget(QWidget):
             y = cy + radius_y * math.sin(angle)
             painter.drawEllipse(QRectF(x - dot, y - dot, dot * 2, dot * 2))
 
+    def _draw_roi_grid(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        compact: bool,
+        *,
+        label_gutter: float,
+        line_extension: float,
+    ) -> None:
+        """Draw rectangular ROIs across the complete reconstruction area."""
+        labels = self.roi_grid_labels
+        if not labels:
+            return
+
+        rows = len(labels)
+        cell_h = rect.height() / rows
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(238, 247, 252, 205), 1.25))
+        painter.drawLine(rect.left(), rect.top(), rect.left(), rect.bottom())
+        painter.drawLine(rect.center().x(), rect.top(), rect.center().x(), rect.bottom())
+        painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
+        for row in range(rows + 1):
+            y = rect.top() + row * cell_h
+            painter.drawLine(
+                rect.left() - line_extension,
+                y,
+                rect.right() + line_extension,
+                y,
+            )
+
+        font_size = max(6, min(9 if compact else 11, int(cell_h * 0.34)))
+        painter.setFont(QFont("Arial", font_size, QFont.Bold))
+        label_padding = 3.0
+        for row, row_labels in enumerate(labels):
+            for column, label in enumerate(row_labels):
+                if column == 0:
+                    cell = QRectF(
+                        rect.left() - line_extension - label_gutter - 3.0,
+                        rect.top() + row * cell_h,
+                        label_gutter,
+                        cell_h,
+                    )
+                    alignment = Qt.AlignRight | Qt.AlignVCenter
+                else:
+                    cell = QRectF(
+                        rect.right() + line_extension + 3.0,
+                        rect.top() + row * cell_h,
+                        label_gutter,
+                        cell_h,
+                    )
+                    alignment = Qt.AlignLeft | Qt.AlignVCenter
+                bounds = painter.boundingRect(cell, alignment, label)
+                background = bounds.adjusted(
+                    -label_padding, -1.0, label_padding, 1.0
+                ).intersected(cell.adjusted(1.0, 1.0, -1.0, -1.0))
+                painter.fillRect(background, QColor(8, 18, 26, 165))
+                painter.setPen(QColor(248, 252, 255, 235))
+                painter.drawText(cell, alignment, label)
+        painter.restore()
+
     def _element_color(self, value: float) -> QColor:
+        low_hex, high_hex = resolve_color_map(
+            self._color_map_id,
+            self._custom_color_low,
+            self._custom_color_high,
+        )
+        low_color = QColor(low_hex)
+        high_color = QColor(high_hex)
+        neutral = QColor("#17232d")
         if self._effective_display_mode() == "absolute":
             if value <= 0.0:
                 return QColor("#101820")
             level = max(-1.5, min(1.5, math.log(value))) / 3.0 + 0.5
+            if not self._two_color_visualization:
+                return self._mix(neutral, high_color, level)
             if level < 0.5:
-                return self._mix(QColor("#283593"), QColor("#17333b"), level * 2.0)
-            return self._mix(QColor("#17333b"), QColor("#ffc857"), (level - 0.5) * 2.0)
+                return self._mix(low_color, neutral, level * 2.0)
+            return self._mix(neutral, high_color, (level - 0.5) * 2.0)
         level = max(-1.0, min(1.0, value / max(self._color_limit or 0.0, 1e-9)))
+        if not self._two_color_visualization:
+            return self._mix(neutral, high_color, abs(level))
         if level < 0.0:
-            return self._mix(QColor("#17232d"), QColor("#29b6d1"), abs(level))
-        return self._mix(QColor("#17232d"), QColor("#ffc857"), level)
+            return self._mix(neutral, low_color, abs(level))
+        return self._mix(neutral, high_color, level)
 
     @staticmethod
     def _mix(low: QColor, high: QColor, amount: float) -> QColor:

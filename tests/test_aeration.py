@@ -5,9 +5,11 @@ import numpy as np
 
 from app.application import (
     ALGORITHM_VERSION,
+    DERIVATIVE_ALGORITHM_VERSION,
     LEGACY_ALGORITHM_VERSION,
     AerationAlgorithmParameters,
     AerationProcessor,
+    calculate_breathing_velocity,
     calculate_aeration_metrics,
 )
 from app.domain import DataQuality, EITFrame
@@ -30,12 +32,26 @@ def frame(sequence: int, value: float, *, quality=DataQuality.VALID) -> EITFrame
 
 
 class AerationCalculationTest(unittest.TestCase):
-    def test_derivative_detector_is_default_and_legacy_remains_versioned(self):
+    def test_displayed_velocity_uses_the_detection_derivative(self):
+        fs = 25.0
+        time = np.arange(0.0, 12.0, 1.0 / fs)
+        signal = 10.0 + 2.0 * np.sin(2.0 * np.pi * 0.25 * time)
+        velocity = calculate_breathing_velocity(
+            signal, AerationAlgorithmParameters(sample_rate_hz=fs)
+        )
+
+        self.assertEqual(velocity.shape, signal.shape)
+        expected_sign = np.cos(2.0 * np.pi * 0.25 * time)
+        self.assertGreater(np.corrcoef(velocity[25:-25], expected_sign[25:-25])[0, 1], 0.99)
+
+    def test_mad_mean_is_default_and_previous_detectors_remain_versioned(self):
         current = AerationAlgorithmParameters()
+        derivative = AerationAlgorithmParameters(peak_detection_method="derivative")
         legacy = AerationAlgorithmParameters(peak_detection_method="legacy")
 
-        self.assertEqual(current.peak_detection_method, "derivative")
+        self.assertEqual(current.peak_detection_method, "mad_mean")
         self.assertEqual(current.version, ALGORITHM_VERSION)
+        self.assertEqual(derivative.version, DERIVATIVE_ALGORITHM_VERSION)
         self.assertEqual(legacy.version, LEGACY_ALGORITHM_VERSION)
 
     def test_reference_signal_produces_expected_rr_tiv_and_regional_shares(self):
@@ -54,8 +70,12 @@ class AerationCalculationTest(unittest.TestCase):
         self.assertEqual(result.algorithm_version, ALGORITHM_VERSION)
         self.assertEqual(result.quality, DataQuality.VALID)
         self.assertAlmostEqual(result.respiratory_rate_bpm, 15.0, places=6)
-        self.assertAlmostEqual(result.tvi_au, 4.0, places=6)
-        self.assertAlmostEqual(sum(result.roi_tvi_au), 4.0, places=6)
+        self.assertAlmostEqual(result.tvi_au, 4.0, delta=0.05)
+        self.assertAlmostEqual(
+            result.minute_ventilation_au_per_min, 60.0, delta=0.75
+        )
+        self.assertEqual(result.status_for("mvi").quality, DataQuality.VALID)
+        self.assertAlmostEqual(sum(result.roi_tvi_au), result.tvi_au, places=6)
         self.assertAlmostEqual(result.right_percent, 50.0, places=6)
         self.assertAlmostEqual(result.left_percent, 50.0, places=6)
         self.assertAlmostEqual(result.right_left_ratio, 1.0, places=6)
@@ -64,6 +84,47 @@ class AerationCalculationTest(unittest.TestCase):
             tuple(round(value, 6) for value in result.roi_percent),
             (20.0, 15.0, 10.0, 5.0, 20.0, 15.0, 10.0, 5.0),
         )
+
+    def test_mad_mean_averages_a_peak_zone_instead_of_using_one_outlier(self):
+        fs = 25.0
+        time = np.arange(0.0, 24.0, 1.0 / fs)
+        phase = np.mod(time, 4.0)
+        breathing = np.piecewise(
+            phase,
+            [
+                phase < 0.5,
+                (phase >= 0.5) & (phase < 2.0),
+                (phase >= 2.0) & (phase < 2.5),
+                phase >= 2.5,
+            ],
+            [
+                8.0,
+                lambda value: 8.0 + (value - 0.5) * 4.0 / 1.5,
+                12.0,
+                lambda value: 12.0 - (value - 2.5) * 4.0 / 1.5,
+            ],
+        )
+        breathing[np.argmin(np.abs(time - 22.2))] = 13.0
+        weights = (4, 3, 2, 1, 4, 3, 2, 1)
+        rois = [breathing * weight / sum(weights) for weight in weights]
+
+        averaged = calculate_aeration_metrics(
+            breathing,
+            rois,
+            AerationAlgorithmParameters(sample_rate_hz=fs),
+        )
+        point_peak = calculate_aeration_metrics(
+            breathing,
+            rois,
+            AerationAlgorithmParameters(
+                sample_rate_hz=fs, peak_detection_method="legacy"
+            ),
+        )
+
+        self.assertAlmostEqual(averaged.respiratory_rate_bpm, 15.0)
+        self.assertGreater(averaged.eili_au, 12.0)
+        self.assertLess(averaged.eili_au, point_peak.eili_au)
+        self.assertAlmostEqual(averaged.eili_au, 12.0 + 1.0 / 7.0)
 
     def test_derivative_detector_ignores_small_zero_crossing_jitter(self):
         fs = 25.0
@@ -116,14 +177,16 @@ class AerationCalculationTest(unittest.TestCase):
 
         self.assertIsNone(result.respiratory_rate_bpm)
         self.assertIsNotNone(result.tvi_au)
-        self.assertEqual(result.quality, DataQuality.DEGRADED)
+        self.assertIsNone(result.minute_ventilation_au_per_min)
+        self.assertEqual(result.quality, DataQuality.VALID)
         self.assertEqual(result.status_for("rr").quality, DataQuality.UNAVAILABLE)
+        self.assertEqual(result.status_for("mvi").quality, DataQuality.UNAVAILABLE)
         self.assertEqual(
             result.status_for("rr").reason, "insufficient_complete_cycles"
         )
-        self.assertEqual(result.status_for("tvi").quality, DataQuality.DEGRADED)
+        self.assertEqual(result.status_for("tvi").quality, DataQuality.VALID)
 
-    def test_degraded_source_marks_each_available_metric_degraded(self):
+    def test_source_quality_is_temporarily_ignored_for_available_metrics(self):
         fs = 25.0
         time = np.arange(0.0, 20.0, 1.0 / fs)
         breathing = 5.0 + np.sin(2.0 * np.pi * 0.25 * time)
@@ -137,24 +200,22 @@ class AerationCalculationTest(unittest.TestCase):
             source_reason="source_quality_degraded",
         )
 
-        self.assertEqual(result.quality, DataQuality.DEGRADED)
+        self.assertEqual(result.quality, DataQuality.VALID)
         for metric in ("rr", "tvi", "eeli", "eili", "r_pct", "roi_1"):
-            self.assertEqual(result.status_for(metric).quality, DataQuality.DEGRADED)
-            self.assertEqual(
-                result.status_for(metric).reason, "source_quality_degraded"
-            )
+            self.assertEqual(result.status_for(metric).quality, DataQuality.VALID)
+            self.assertIsNone(result.status_for(metric).reason)
 
-    def test_processor_filters_and_rejects_a_large_artifact(self):
+    def test_processor_temporarily_accepts_a_large_artifact_as_valid(self):
         processor = AerationProcessor(
             AerationAlgorithmParameters(smoothing_samples=3), capacity=100
         )
         for sequence in range(30):
             self.assertIsNotNone(processor.process(frame(sequence, 1.0)))
 
-        self.assertIsNone(processor.process(frame(30, 1000.0)))
-        self.assertEqual(processor.quality, DataQuality.DEGRADED)
-        self.assertEqual(processor.quality_reason, "motion_or_signal_artifact")
-        self.assertEqual(processor.waveforms(60.0)["global"].size, 30)
+        self.assertIsNotNone(processor.process(frame(30, 1000.0)))
+        self.assertEqual(processor.quality, DataQuality.VALID)
+        self.assertIsNone(processor.quality_reason)
+        self.assertEqual(processor.waveforms(60.0)["global"].size, 31)
 
     def test_spatial_map_is_reduced_to_synchronized_global_and_eight_rois(self):
         processor = AerationProcessor(capacity=10)

@@ -48,8 +48,10 @@ C = {
     "thorax":     "#0a1628",
 
     # nav active / hover
-    "nav_active": "#1565c0",
-    "nav_hover":  "#0d2744",
+    "nav_active":               "#1565c0",
+    "nav_active_surround":      "#0b4f91",
+    "nav_active_surround_edge": "#2196f3",
+    "nav_hover":                "#0d2744",
 }
 
 # ── Закреплённые цвета типов аэрации (T / R / L) ────────────────────────────
@@ -71,6 +73,7 @@ FONT_BASE        = 18   # body, inputs (было 13)
 FONT_SMALL       = 16   # вторичные подписи (было 9–12)
 FONT_LABEL       = 18   # метки полей
 FONT_VALUE       = 24   # числовые показатели
+FONT_MEDICAL_VALUE = 32 # ключевые медицинские показатели для чтения с расстояния
 FONT_TITLE       = 20   # заголовки секций (было 12)
 FONT_BTN         = 18   # кнопки (было 13)
 FONT_BTN_ACTION  = 20   # жёлтые action-кнопки (было 12)
@@ -108,6 +111,24 @@ def start_button_style() -> str:
             color: #9fb7a7;
             border-color: #326541;
         }}
+    """
+
+
+def stop_button_style() -> str:
+    """Shared Stop style with the same typography as the Start action."""
+    return f"""
+        QPushButton {{
+            background-color: {C['alarm']};
+            color: white;
+            border: 1px solid #b71c1c;
+            border-radius: 4px;
+            font-size: {FONT_BTN_START}px;
+            font-weight: bold;
+            padding: 10px 20px;
+            min-height: 38px;
+        }}
+        QPushButton:hover {{ background-color: #c62828; }}
+        QPushButton:pressed {{ background-color: #b71c1c; }}
     """
 
 

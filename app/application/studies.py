@@ -27,7 +27,7 @@ from ..domain import (
 SELECTED_PATIENT_SETTING = "selected_patient_id"
 CURRENT_STUDY_SETTING = "current_study_id"
 OPERATOR_NAME_SETTING = "operator_name"
-DEFAULT_OPERATOR_NAME = "local-operator"
+DEFAULT_OPERATOR_NAME = "Оператор"
 
 
 class StudyLifecycleError(RuntimeError):

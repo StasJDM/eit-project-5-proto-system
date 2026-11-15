@@ -6,7 +6,6 @@ Supports runtime language switching via i18n.language_changed.
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PySide6.QtCore import Qt, Signal
-from ..styles import C
 from ..i18n import t, i18n
 
 from ..styles import C, FONT_NAV
@@ -35,25 +34,34 @@ class NavPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("nav_panel")
         self.setFixedWidth(195)
         self.setStyleSheet(f"""
-            QWidget {{
+            QWidget#nav_panel {{
                 background-color: {C['bg_nav']};
-                border-left: 2px solid {C['border']};
+                border: none;
             }}
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 6, 5, 6)
+        layout.setContentsMargins(0, 6, 5, 6)
         layout.setSpacing(0)
 
         self._buttons:  dict[str, QPushButton] = {}
+        self._item_frames: dict[str, QWidget] = {}
         self._item_keys: list[tuple[str, str]]  = list(NAV_ITEMS)  # for retranslate
 
         for key, i18n_key in NAV_ITEMS:
             btn = self._make_btn(key, t(i18n_key))
-            layout.addWidget(btn, stretch=1)
+            frame = QWidget(self)
+            frame.setObjectName("nav_item_surround")
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(4, 4, 4, 4)
+            frame_layout.setSpacing(0)
+            frame_layout.addWidget(btn)
+            layout.addWidget(frame, stretch=1)
             self._buttons[key] = btn
+            self._item_frames[key] = frame
 
         self._current = "main"
         self._set_active("main")
@@ -64,6 +72,13 @@ class NavPanel(QWidget):
 
     def set_active(self, key: str):
         self._set_active(key)
+
+    def set_item_visible(self, key: str, visible: bool) -> None:
+        if key in self._item_frames:
+            self._item_frames[key].setVisible(visible)
+
+    def is_item_visible(self, key: str) -> bool:
+        return key in self._item_frames and not self._item_frames[key].isHidden()
 
     def retranslate(self):
         for key, i18n_key in self._item_keys:
@@ -88,9 +103,35 @@ class NavPanel(QWidget):
     def _set_active(self, key: str):
         if self._current != key and self._current in self._buttons:
             self._buttons[self._current].setStyleSheet(self._btn_style(False))
+            self._set_surround_active(self._current, False)
         self._current = key
         if key in self._buttons:
             self._buttons[key].setStyleSheet(self._btn_style(True))
+            self._set_surround_active(key, True)
+
+    def _set_surround_active(self, key: str, active: bool) -> None:
+        frame = self._item_frames[key]
+        frame.setProperty("active", active)
+        if active:
+            frame.setStyleSheet(f"""
+                QWidget#nav_item_surround {{
+                    background-color: {C['nav_active_surround']};
+                    border: 2px solid {C['nav_active_surround_edge']};
+                    border-left: none;
+                    border-top-left-radius: 0;
+                    border-bottom-left-radius: 0;
+                    border-top-right-radius: 10px;
+                    border-bottom-right-radius: 10px;
+                }}
+            """)
+        else:
+            frame.setStyleSheet("""
+                QWidget#nav_item_surround {
+                    background-color: transparent;
+                    border: 1px solid transparent;
+                    border-radius: 10px;
+                }
+            """)
 
     def _btn_style(self, active: bool) -> str:
         if active:
@@ -99,7 +140,7 @@ class NavPanel(QWidget):
                     background-color: {C['nav_active']};
                     color: white;
                     border: 1px solid {C['blue_light']};
-                    border-radius: 0;
+                    border-radius: 6px;
                     text-align: left;
                     padding: {_NAV_PAD_V}px {_NAV_PAD_H}px;
                     font-size: {_NAV_FONT}px;
@@ -111,7 +152,7 @@ class NavPanel(QWidget):
                 background-color: {C['bg_nav']};
                 color: {C['text_dim']};
                 border: 1px solid {C['border']};
-                border-radius: 0;
+                border-radius: 4px;
                 text-align: left;
                 padding: {_NAV_PAD_V}px {_NAV_PAD_H}px;
                 font-size: {_NAV_FONT}px;

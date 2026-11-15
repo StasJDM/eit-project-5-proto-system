@@ -8,12 +8,15 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDoubleSpinBox, QSpinBox, QComboBox, QFrame, QSizePolicy, QMessageBox,
+    QColorDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from ..styles import C, configure_action_btn, FONT_BASE, FONT_LABEL, FONT_BTN, FONT_SMALL
 from ..i18n import t, i18n
 from ..application import DiagnosisCatalogService, EITSettingsService
 from ..domain import AcquisitionSettings
+from ..color_maps import COLOR_MAPS, CUSTOM_COLOR_MAP_ID
 
 
 # ── Style helpers ─────────────────────────────────────────────────────────────
@@ -153,6 +156,8 @@ class _ComboRow(QWidget):
 class _ToggleGroup(QWidget):
     """Label + two mutually-exclusive toggle buttons."""
 
+    state_changed = Signal(str)
+
     def __init__(self, label_key: str, opt_a_key: str, opt_b_key: str,
                  default: str = "a", parent=None):
         super().__init__(parent)
@@ -199,12 +204,109 @@ class _ToggleGroup(QWidget):
         self._btn_b.setStyleSheet(
             _toggle_active_style() if state == "b" else _toggle_inactive_style()
         )
+        self.state_changed.emit(state)
 
     def retranslate(self):
         self._lbl.setText(t(self._label_key))
         self._btn_a.setText(t(self._opt_a_key))
         self._btn_b.setText(t(self._opt_b_key))
         self._select(self._state)
+
+
+class _ColorMapRow(QWidget):
+    """Palette selector with two editable swatches for the custom entry."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._custom_low = "#29b6d1"
+        self._custom_high = "#ffc857"
+        self._two_color = True
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self._label = QLabel()
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(_sublabel_style())
+        lay.addWidget(self._label)
+        self._combo = QComboBox()
+        self._combo.setObjectName("color_map_selector")
+        self._combo.setStyleSheet(_field_style())
+        self._combo.currentIndexChanged.connect(self._sync_custom_visibility)
+        lay.addWidget(self._combo)
+        self._custom_row = QWidget()
+        custom_lay = QHBoxLayout(self._custom_row)
+        custom_lay.setContentsMargins(0, 0, 0, 0)
+        custom_lay.setSpacing(12)
+        self._low_button = QPushButton()
+        self._high_button = QPushButton()
+        self._low_button.clicked.connect(lambda: self._choose_color("low"))
+        self._high_button.clicked.connect(lambda: self._choose_color("high"))
+        custom_lay.addWidget(self._low_button, 1)
+        custom_lay.addWidget(self._high_button, 1)
+        lay.addWidget(self._custom_row)
+        self.retranslate()
+
+    def value(self) -> str:
+        return str(self._combo.currentData())
+
+    def set_value(self, value: str) -> None:
+        index = self._combo.findData(value)
+        self._combo.setCurrentIndex(index if index >= 0 else 0)
+        self._sync_custom_visibility()
+
+    def set_custom_colors(self, low: str, high: str) -> None:
+        self._custom_low = low
+        self._custom_high = high
+        self._update_swatch_buttons()
+
+    def set_two_color_mode(self, two_color: bool) -> None:
+        self._two_color = bool(two_color)
+        self._low_button.setVisible(self._two_color)
+        self._update_swatch_buttons()
+
+    @property
+    def custom_colors(self) -> tuple[str, str]:
+        return self._custom_low, self._custom_high
+
+    def _sync_custom_visibility(self, *_args) -> None:
+        self._custom_row.setVisible(self.value() == CUSTOM_COLOR_MAP_ID)
+
+    def _choose_color(self, target: str) -> None:
+        current = self._custom_low if target == "low" else self._custom_high
+        selected = QColorDialog.getColor(QColor(current), self)
+        if not selected.isValid():
+            return
+        if target == "low":
+            self._custom_low = selected.name()
+        else:
+            self._custom_high = selected.name()
+        self._update_swatch_buttons()
+
+    def _update_swatch_buttons(self) -> None:
+        self._low_button.setText(t("eit_custom_color_low"))
+        self._high_button.setText(
+            t("eit_custom_color_high" if self._two_color else "eit_custom_color")
+        )
+        for button, color in (
+            (self._low_button, self._custom_low),
+            (self._high_button, self._custom_high),
+        ):
+            button.setStyleSheet(
+                f"background:{color};color:#101820;border:2px solid {C['border_light']};"
+                f"border-radius:4px;font-size:{FONT_LABEL}px;font-weight:bold;min-height:36px;"
+            )
+
+    def retranslate(self) -> None:
+        current = self.value() if self._combo.count() else None
+        self._label.setText(t("eit_color_map_label"))
+        self._combo.clear()
+        for color_map in COLOR_MAPS:
+            self._combo.addItem(t(color_map.label_key), color_map.id)
+        self._combo.addItem(t("color_map_custom"), CUSTOM_COLOR_MAP_ID)
+        if current is not None:
+            self.set_value(current)
+        self._update_swatch_buttons()
+        self._sync_custom_visibility()
 
 
 # ── EIT settings screen ───────────────────────────────────────────────────────
@@ -269,12 +371,17 @@ class EITSettingsScreen(QWidget):
         right.addStretch()
 
         self._grp_color = _ToggleGroup(
-            "eit_viz_color_label", "eit_viz_2colors", "eit_viz_standard",
+            "eit_viz_color_label", "eit_viz_2colors", "eit_viz_1color",
             default="a",
         )
         right.addWidget(self._grp_color)
 
-        right.addStretch()
+        self._color_map = _ColorMapRow()
+        self._grp_color.state_changed.connect(
+            lambda state: self._color_map.set_two_color_mode(state == "a")
+        )
+        self._color_map.set_two_color_mode(self._grp_color._state == "a")
+        right.addWidget(self._color_map)
 
         self._grp_pathology = _ToggleGroup(
             "eit_pathology_label", "pat_yes", "pat_no",
@@ -402,6 +509,9 @@ class EITSettingsScreen(QWidget):
             electrode_order=self._row_electrode_order.value(),
             measurement_sequence=self._row_measurement_sequence.value(),
             two_color_visualization=self._grp_color._state == "a",
+            color_map_id=self._color_map.value(),
+            custom_color_low=self._color_map.custom_colors[0],
+            custom_color_high=self._color_map.custom_colors[1],
             pathology_detection=self._grp_pathology._state == "a",
         )
 
@@ -413,6 +523,10 @@ class EITSettingsScreen(QWidget):
         self._row_electrode_order.set_value(settings.electrode_order)
         self._row_measurement_sequence.set_value(settings.measurement_sequence)
         self._grp_color._select("a" if settings.two_color_visualization else "b")
+        self._color_map.set_custom_colors(
+            settings.custom_color_low, settings.custom_color_high
+        )
+        self._color_map.set_value(settings.color_map_id)
         self._grp_pathology._select("a" if settings.pathology_detection else "b")
 
     # ── Retranslate ────────────────────────────────────────────────────────────
@@ -424,6 +538,7 @@ class EITSettingsScreen(QWidget):
         self._row_electrode_order.retranslate()
         self._row_measurement_sequence.retranslate()
         self._grp_color.retranslate()
+        self._color_map.retranslate()
         self._grp_pathology.retranslate()
         self._grp_diagnosis_catalog.retranslate()
         self._btn_start.setText(t("btn_start"))

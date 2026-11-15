@@ -24,16 +24,16 @@ from ..application import (
     BreathingClass, BreathingClassificationService, BreathingModelVisualization,
     EventMarkerService, MonitoringData,
 )
-from ..domain import utc_now
+from ..domain import DataQuality, utc_now
 from ..application.monitoring import DISPLAY_WINDOW_SEC, DISPLAY_SAMPLES, FS
 from ..application.signal_shapes import breath_waveform
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounter, _VALUE_FONT
 from ..widgets.lung_viz import LungVizWidget
 from ..widgets.waveform_panel import WaveformPanel, RegionalWaveformPanel
-from ..styles import C, WAVE_COLORS, configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, TAB_BAR_FONT, TAB_BAR_SUB_FONT, FONT_BASE, FONT_SMALL, FONT_LABEL, FONT_VALUE, FONT_BTN_START
+from ..styles import C, WAVE_COLORS, configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, TAB_BAR_FONT, TAB_BAR_SUB_FONT, FONT_BASE, FONT_SMALL, FONT_LABEL, FONT_VALUE, FONT_MEDICAL_VALUE, FONT_BTN_START, stop_button_style
 from ..i18n import t, i18n
-from ..ui_text import quality_reason_text, quality_text
+from ..ui_text import quality_text
 
 PAINT_MS  = 100
 RR_BPM = 15
@@ -109,7 +109,7 @@ class _PBox(QFrame):
     """Именованный числовой индикатор: параметр слева, значение справа — одна рамка."""
 
     _W = 152
-    _H = 58
+    _H = 64
 
     def __init__(self, label: str, w: int | None = None, parent=None):
         super().__init__(parent)
@@ -139,9 +139,9 @@ class _PBox(QFrame):
 
         self._v = QLabel("—")
         self._v.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        self._v.setMinimumWidth(56)
+        self._v.setMinimumWidth(68)
         self._v.setStyleSheet(
-            f"color:{C['text']};font-size:{FONT_VALUE}px;font-weight:bold;"
+            f"color:{C['text']};font-size:{FONT_MEDICAL_VALUE}px;font-weight:bold;"
         )
         lay.addWidget(self._v)
 
@@ -178,14 +178,7 @@ def _start_btn_text(running: bool) -> str:
     return t("btn_stop") if running else t("btn_start")
 
 
-_START_STYLE_RUN = f"""
-    QPushButton {{
-        background:{C['alarm']}; color:white;
-        border:1px solid #b71c1c; border-radius:4px;
-        font-size:{FONT_BTN_START}px; font-weight:bold; padding:10px 20px;
-    }}
-    QPushButton:hover {{ background:#c62828; }}
-"""
+_START_STYLE_RUN = stop_button_style()
 
 
 def _configure_start_btn(btn: QPushButton):
@@ -652,8 +645,7 @@ class _GlobalLeftPanel(QWidget):
             getattr(snap, "reconstruction_map", None),
             getattr(snap, "absolute_conductivity_map", None),
         )
-        snap_quality = getattr(snap, "quality", "unavailable")
-        quality = quality_text(snap_quality)
+        quality = quality_text(DataQuality.VALID)
         cycles = getattr(snap, "complete_cycle_count", 0)
         selected = getattr(snap, "selected_cycle_count", None)
         cycle_text = f"{cycles}" if selected is None else f"{cycles}/{selected}"
@@ -666,11 +658,11 @@ class _GlobalLeftPanel(QWidget):
         )
         params = getattr(snap, "algorithm_parameters", None)
         if params is not None:
-            detector_key = (
-                "sys_peak_detector_legacy"
-                if params.peak_detection_method == "legacy"
-                else "sys_peak_detector_derivative"
-            )
+            detector_key = {
+                "mad_mean": "sys_peak_detector_mad_mean",
+                "derivative": "sys_peak_detector_derivative",
+                "legacy": "sys_peak_detector_legacy",
+            }.get(params.peak_detection_method, "sys_peak_detector_mad_mean")
             self._analysis_status.setToolTip(
                 f"{t('analysis_param_sample_rate')}: "
                 f"{params.sample_rate_hz:g} {t('analysis_unit_hz')}; "
@@ -679,8 +671,7 @@ class _GlobalLeftPanel(QWidget):
                 f"{t('analysis_param_rr_range')}: "
                 f"{params.minimum_rr_bpm:g}–{params.maximum_rr_bpm:g} {t('wave_rr_unit')}; "
                 f"{t('sys_engineering_peak_detector')} {t(detector_key)}; "
-                f"{t('ui_reason_label')}: "
-                f"{quality_reason_text(getattr(snap, 'quality_reason', None))}"
+                f"{t('ui_reason_label')}: —"
             )
 
     @property
@@ -778,11 +769,11 @@ class RegionalTab(QWidget):
         pgl.setContentsMargins(0, 0, 0, 0)
         pgl.setHorizontalSpacing(8)
         pgl.setVerticalSpacing(6)
-        self.bx_t  = _PBox("T, %", w=128)
-        self.bx_r  = _PBox("R, %", w=128)
-        self.bx_l  = _PBox("L, %", w=128)
-        self.bx_lr = _PBox("R/L",  w=128)
-        self.bx_vd = _PBox("V/D",  w=128)
+        self.bx_t  = _PBox("T, %", w=160)
+        self.bx_r  = _PBox("R, %", w=160)
+        self.bx_l  = _PBox("L, %", w=160)
+        self.bx_lr = _PBox("R/L",  w=160)
+        self.bx_vd = _PBox("V/D",  w=160)
         pgl.addWidget(self.bx_t,  0, 0)
         pgl.addWidget(self.bx_r,  0, 1)
         pgl.addWidget(self.bx_l,  0, 2)
@@ -1185,8 +1176,133 @@ _TAB_IDLE_STYLE = f"""
 """
 
 
+class PeepMapWidget(QWidget):
+    """Silent Spaces image with CoV and HoV overlays from section 9.10."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._result = None
+        self.setMinimumSize(360, 360)
+
+    def set_result(self, result) -> None:
+        self._result = result
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(C["bg_panel"]))
+        result = self._result
+        if result is None or not result.available or result.lung_mask is None:
+            painter.setPen(QColor(C["text_dim"]))
+            painter.drawText(self.rect(), Qt.AlignCenter, t("peep_not_available"))
+            return
+        mask = result.lung_mask
+        silent = result.silent_mask
+        rows, columns = len(mask), len(mask[0])
+        side = min(self.width() - 36, self.height() - 64)
+        left = (self.width() - side) / 2.0
+        top = 42.0
+        cell_w, cell_h = side / columns, side / rows
+        painter.setPen(Qt.NoPen)
+        for row in range(rows):
+            for column in range(columns):
+                if not mask[row][column]:
+                    continue
+                painter.setBrush(QColor("#d82d87" if silent[row][column] else "#69727d"))
+                painter.drawRect(
+                    int(left + column * cell_w), int(top + row * cell_h),
+                    max(1, int(cell_w + 0.5)), max(1, int(cell_h + 0.5)),
+                )
+        if result.horizon_line is not None:
+            (x1, y1), (x2, y2) = result.horizon_line
+            painter.setPen(QPen(QColor("#f3f5f7"), 2))
+            painter.drawLine(
+                int(left + (x1 + 0.5) * cell_w), int(top + (y1 + 0.5) * cell_h),
+                int(left + (x2 + 0.5) * cell_w), int(top + (y2 + 0.5) * cell_h),
+            )
+        if result.cov_x_percent is not None and result.cov_y_percent is not None:
+            x = left + result.cov_x_percent / 100.0 * side
+            y = top + result.cov_y_percent / 100.0 * side
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.setBrush(QColor("#ffffff"))
+            painter.drawEllipse(int(x - 5), int(y - 5), 10, 10)
+        painter.setPen(QColor(C["text"]))
+        painter.drawText(0, 8, self.width(), 24, Qt.AlignCenter, t("peep_silent_spaces"))
+        painter.setPen(QColor(C["text_dim"]))
+        painter.drawText(int(left), int(top - 18), "NSS")
+        painter.drawText(
+            int(left), int(top + side + 8), int(side), 20,
+            Qt.AlignRight, "DSS",
+        )
+
+
+class PeepTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        content = QWidget()
+        layout = QHBoxLayout(content)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(18)
+        self.map_widget = PeepMapWidget()
+        layout.addWidget(self.map_widget, stretch=3)
+        metrics = QWidget()
+        ml = QVBoxLayout(metrics)
+        ml.setSpacing(10)
+        self.bx_fls = _PBox("FLS, %", 230)
+        self.bx_dss = _PBox("DSS, %", 230)
+        self.bx_nss = _PBox("NSS, %", 230)
+        self.bx_cov_v = _PBox("CoV(v), %", 230)
+        self.bx_cov_h = _PBox("CoV(h), %", 230)
+        for box in (self.bx_fls, self.bx_dss, self.bx_nss, self.bx_cov_v, self.bx_cov_h):
+            ml.addWidget(box)
+        self._hov_label = QLabel(t("peep_horizon") + " (HoV)")
+        self._cov_label = QLabel(t("peep_center") + " (CoV)")
+        self._details = QLabel()
+        for label in (self._hov_label, self._cov_label, self._details):
+            label.setWordWrap(True)
+            label.setStyleSheet(f"color:{C['text_dim']};font-size:{FONT_SMALL}px;")
+            ml.addWidget(label)
+        ml.addStretch()
+        layout.addWidget(metrics, stretch=1)
+        root.addWidget(content, stretch=1)
+        self._bar = _BottomBar()
+        self.btn_start = self._bar.btn_start
+        self.btn_event = self._bar.btn_event
+        self.cnt_eit = self._bar.cnt_eit
+        self.cnt_es = self._bar.cnt_es
+        root.addWidget(self._bar)
+
+    def update_data(self, snapshot, _waves) -> None:
+        result = snapshot.peep
+        self.map_widget.set_result(result)
+        self.bx_fls.set_value(result.fls_percent)
+        self.bx_dss.set_value(result.dss_percent)
+        self.bx_nss.set_value(result.nss_percent)
+        self.bx_cov_v.set_value(result.cov_v_percent)
+        self.bx_cov_h.set_value(result.cov_h_percent)
+        self._details.setText(
+            f"RTS ≤ {result.silent_threshold_percent:g}% · "
+            f"{result.analysis_interval_seconds:g} {t('analysis_seconds_short')} · "
+            f"g {result.gravity_angle_degrees:g}° · {result.algorithm_version}"
+        )
+
+    def sync_start(self, running: bool) -> None:
+        self._bar.sync_start(running)
+
+    def set_counters(self, eit: str, es: str) -> None:
+        self._bar.set_counters(eit, es)
+
+    def retranslate(self) -> None:
+        self._hov_label.setText(t("peep_horizon") + " (HoV)")
+        self._cov_label.setText(t("peep_center") + " (CoV)")
+
+
 class AnalysisScreen(QWidget):
-    """Экран АНАЛИЗ с тремя вкладками и внедрённым источником данных."""
+    """Экран АНАЛИЗ с живыми вкладками аэрации, дыхания и PEEP."""
 
     def __init__(
         self,
@@ -1196,38 +1312,45 @@ class AnalysisScreen(QWidget):
         marker_service: EventMarkerService | None = None,
         classification_service: BreathingClassificationService | None = None,
         engineering_settings=None,
+        eit_settings=None,
     ):
         super().__init__(parent)
 
         self._monitoring = monitoring
         self._marker_service = marker_service
+        self._display_window_sec = float(
+            engineering_settings.current.graph_display_period_seconds
+            if engineering_settings is not None else DISPLAY_WINDOW_SEC
+        )
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # ── Панель вкладок ────────────────────────────────────────────────────
-        tab_bar = QWidget()
-        tab_bar.setFixedHeight(72)
-        tab_bar.setStyleSheet(
+        self._tab_bar = QWidget()
+        self._tab_bar.setFixedHeight(72)
+        self._tab_bar.setStyleSheet(
             f"background:{C['bg_header']};border-bottom:1px solid {C['border']};"
         )
-        tbl = QHBoxLayout(tab_bar)
+        tbl = QHBoxLayout(self._tab_bar)
         tbl.setContentsMargins(0, 0, 0, 0)
         tbl.setSpacing(0)
 
         self._btn_path = QPushButton(t("analysis_tab_pathology"))
         self._btn_glob = QPushButton(t("analysis_tab_global"))
         self._btn_reg  = QPushButton(t("analysis_tab_regional"))
+        self._btn_peep = QPushButton(t("analysis_tab_peep"))
 
-        for btn in (self._btn_path, self._btn_reg, self._btn_glob):
+        for btn in (self._btn_path, self._btn_reg, self._btn_glob, self._btn_peep):
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             tbl.addWidget(btn)
 
         self._btn_path.clicked.connect(lambda: self._switch_tab(0))
         self._btn_reg.clicked.connect(lambda: self._switch_tab(1))
         self._btn_glob.clicked.connect(lambda: self._switch_tab(2))
+        self._btn_peep.clicked.connect(lambda: self._switch_tab(3))
 
-        root.addWidget(tab_bar)
+        root.addWidget(self._tab_bar)
 
         # ── Стек вкладок ──────────────────────────────────────────────────────
         self._stack = QStackedWidget()
@@ -1238,14 +1361,24 @@ class AnalysisScreen(QWidget):
         self._reg_tab = RegionalTab(
             roi_count=(engineering_settings.current.roi_count if engineering_settings else 8)
         )
+        self._peep_tab = PeepTab()
         if engineering_settings is not None:
             self._unsubscribe_engineering = engineering_settings.subscribe(
-                lambda settings: self._reg_tab.set_roi_count(settings.roi_count)
+                self._apply_engineering_settings
+            )
+        if eit_settings is not None:
+            self._unsubscribe_eit_settings = eit_settings.subscribe(
+                self._apply_eit_settings
             )
 
         self._stack.addWidget(self._path_tab)
         self._stack.addWidget(self._reg_tab)
         self._stack.addWidget(self._global_tab)
+        self._stack.addWidget(self._peep_tab)
+        if eit_settings is not None:
+            self._apply_eit_settings(eit_settings.current)
+        if engineering_settings is not None:
+            self._apply_engineering_settings(engineering_settings.current)
         self._global_tab._left.analysis_selection_changed.connect(
             self._configure_global_analysis
         )
@@ -1266,14 +1399,14 @@ class AnalysisScreen(QWidget):
     # ── Вспомогательные ───────────────────────────────────────────────────────
 
     def _all_tabs(self):
-        return [self._path_tab, self._global_tab, self._reg_tab]
+        return [self._path_tab, self._global_tab, self._reg_tab, self._peep_tab]
 
     def _switch_tab(self, idx: int):
         self._stack.setCurrentIndex(idx)
-        styles = [_TAB_IDLE_STYLE] * 3
+        styles = [_TAB_IDLE_STYLE] * 4
         styles[idx] = _TAB_ACTIVE_STYLE
         for btn, style in zip(
-            (self._btn_path, self._btn_reg, self._btn_glob), styles
+            (self._btn_path, self._btn_reg, self._btn_glob, self._btn_peep), styles
         ):
             btn.setStyleSheet(style)
 
@@ -1281,11 +1414,30 @@ class AnalysisScreen(QWidget):
         for tab in self._all_tabs():
             tab.sync_start(running)
 
+    def _apply_engineering_settings(self, settings) -> None:
+        self._reg_tab.set_roi_count(settings.roi_count)
+        self._display_window_sec = float(settings.graph_display_period_seconds)
+        self.set_peep_tab_visible(settings.is_element_visible("analysis.peep_tab"))
+
+    def set_peep_tab_visible(self, visible: bool) -> None:
+        self._btn_peep.setVisible(visible)
+        if not visible and self._stack.currentWidget() is self._peep_tab:
+            self._switch_tab(2)
+
+    def _apply_eit_settings(self, settings) -> None:
+        for widget in self.findChildren(LungVizWidget):
+            widget.set_color_settings(
+                two_color=settings.two_color_visualization,
+                color_map_id=settings.color_map_id,
+                custom_low=settings.custom_color_low,
+                custom_high=settings.custom_color_high,
+            )
+
     def _on_paint(self):
         current = self._stack.currentWidget()
         window = (
             current.analysis_selection[0]
-            if current is self._global_tab else DISPLAY_WINDOW_SEC
+            if current is self._global_tab else self._display_window_sec
         )
         if hasattr(self._monitoring, "read_view"):
             view = self._monitoring.read_view(window)
@@ -1326,5 +1478,7 @@ class AnalysisScreen(QWidget):
         self._btn_path.setText(t("analysis_tab_pathology"))
         self._btn_glob.setText(t("analysis_tab_global"))
         self._btn_reg.setText(t("analysis_tab_regional"))
+        self._btn_peep.setText(t("analysis_tab_peep"))
         if hasattr(self._path_tab, "retranslate"):
             self._path_tab.retranslate()
+        self._peep_tab.retranslate()

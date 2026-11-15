@@ -11,18 +11,19 @@ Structure:
 """
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QMessageBox, QPushButton, QLabel, QComboBox, QSlider,
 )
 from PySide6.QtCore import Qt, QTimer
 
 from .container import ApplicationContainer
 from .application import (
-    ElectrodeQualityBlockedError, EventMarkerError, EventType, StudyLifecycleError,
+    ElectrodeQualityBlockedError, EngineeringSettings, EventMarkerError, EventType,
+    StudyLifecycleError,
 )
 from .domain import StudyStatus
 from .i18n import i18n, t
-from .styles import C, start_button_style
+from .styles import C, start_button_style, stop_button_style
 from .styles import stylesheet
 from .session_timers import SessionTimers, fmt_duration
 from .widgets.header_bar import HeaderBar
@@ -142,9 +143,28 @@ class MainWindow(QMainWindow):
         self._playback_bar = _PlaybackBar(self._container.playback_service, self)
         left_lay.addWidget(self._playback_bar)
 
+        # ── Shared surround: workspace + active navigation item ──────────────
+        self._screen_surround = QWidget()
+        self._screen_surround.setObjectName("screen_surround")
+        self._screen_surround.setStyleSheet(f"""
+            QWidget#screen_surround {{
+                background-color: {C['nav_active_surround']};
+                border: 2px solid {C['nav_active_surround_edge']};
+                border-right: none;
+                border-top-left-radius: 10px;
+                border-bottom-left-radius: 10px;
+                border-top-right-radius: 0;
+                border-bottom-right-radius: 0;
+            }}
+        """)
+        surround_lay = QHBoxLayout(self._screen_surround)
+        surround_lay.setContentsMargins(6, 6, 6, 6)
+        surround_lay.setSpacing(0)
+        left_lay.addWidget(self._screen_surround, stretch=1)
+
         # ── Screen stack ──────────────────────────────────────────────────────
         self._stack = QStackedWidget()
-        left_lay.addWidget(self._stack, stretch=1)
+        surround_lay.addWidget(self._stack)
 
         # ── Navigation panel (full height, right side) ────────────────────────
         self._nav = NavPanel()
@@ -159,6 +179,7 @@ class MainWindow(QMainWindow):
                 self._container.monitoring,
                 marker_service=self._container.marker_service,
                 engineering_settings=self._container.engineering_settings,
+                eit_settings=self._container.eit_settings,
             ),
         )
         self._register(
@@ -178,6 +199,7 @@ class MainWindow(QMainWindow):
                 marker_service=self._container.marker_service,
                 classification_service=self._container.breathing_classification,
                 engineering_settings=self._container.engineering_settings,
+                eit_settings=self._container.eit_settings,
             ),
         )
         self._register(
@@ -189,6 +211,7 @@ class MainWindow(QMainWindow):
                 study_repository=(self._container.repositories.studies if self._container.repositories else None),
                 event_repository=(self._container.repositories.events if self._container.repositories else None),
                 lifecycle=self._container.study_lifecycle,
+                engineering_settings=self._container.engineering_settings,
             ),
         )
         self._register(
@@ -217,6 +240,17 @@ class MainWindow(QMainWindow):
         )
         self._register("reports", ReportsScreen(self._container.report_service))
         self._register("debug",        DebugScreen(self._container.electrode_quality))
+
+        self._visible_tabs = set(self._screens)
+        if self._container.engineering_settings is not None:
+            self._unsubscribe_interface_settings = (
+                self._container.engineering_settings.subscribe(
+                    self._apply_interface_settings
+                )
+            )
+            self._apply_interface_settings(
+                self._container.engineering_settings.current
+            )
 
         self._wire_study_controls()
         self._wire_event_marker_controls()
@@ -248,6 +282,8 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(widget)
 
     def _switch_screen(self, key: str):
+        if key not in self._visible_tabs:
+            return
         current = self._stack.currentWidget()
         patient_screen = self._screens.get("patient")
         if (
@@ -272,6 +308,156 @@ class MainWindow(QMainWindow):
                 reports_screen.refresh()
             self._stack.setCurrentWidget(self._screens[key])
             self._nav.set_active(key)
+
+    def _apply_interface_settings(self, settings: EngineeringSettings) -> None:
+        self._visible_tabs = set(settings.visible_tabs)
+        for key in self._screens:
+            self._nav.set_item_visible(key, key in self._visible_tabs)
+
+        self._apply_element_visibility(settings)
+
+        current = self._stack.currentWidget()
+        current_key = next(
+            (key for key, screen in self._screens.items() if screen is current),
+            None,
+        )
+        if current_key is not None and current_key not in self._visible_tabs:
+            self._switch_screen("main")
+
+    @staticmethod
+    def _set_widgets_visible(visible: bool, *widgets) -> None:
+        for widget in widgets:
+            if widget is not None:
+                widget.setVisible(visible)
+
+    def _apply_element_visibility(self, settings: EngineeringSettings) -> None:
+        """Apply persisted per-screen element visibility without rebuilding screens."""
+        visible = settings.is_element_visible
+        set_visible = self._set_widgets_visible
+
+        patient = self._screens["patient"]
+        set_visible(visible("patient.card"), patient._box_card)
+        set_visible(visible("patient.clinical"), patient._box_clinical)
+        set_visible(visible("patient.history"), patient._box_history)
+        set_visible(
+            visible("patient.controls"),
+            patient._sep, patient._btn_start, patient._btn_save, patient._btn_link,
+        )
+
+        trends = self._screens["trends"]
+        set_visible(visible("trends.tabs"), trends.tab_bar, trends._tab_rule)
+        set_visible(visible("trends.period"), trends._selector)
+        set_visible(visible("trends.charts"), trends.stack)
+        set_visible(visible("trends.controls"), trends.bottom)
+
+        analysis = self._screens["analysis"]
+        set_visible(
+            visible("analysis.tabs"),
+            analysis._tab_bar,
+        )
+        analysis.set_peep_tab_visible(visible("analysis.peep_tab"))
+        set_visible(
+            visible("analysis.lung_map"),
+            analysis._global_tab._left.lung_viz, analysis._reg_tab.lung_viz,
+        )
+        set_visible(
+            visible("analysis.metrics"),
+            analysis._global_tab._left.bx_t, analysis._global_tab._left.bx_r,
+            analysis._global_tab._left.bx_l, analysis._global_tab._left.bx_lr,
+            analysis._global_tab._left.bx_vd, analysis._global_tab._left.bx_rr,
+            analysis._reg_tab.bx_t, analysis._reg_tab.bx_r,
+            analysis._reg_tab.bx_l, analysis._reg_tab.bx_lr,
+            analysis._reg_tab.bx_vd,
+        )
+        set_visible(
+            visible("analysis.waveforms"),
+            analysis._global_tab._waves, analysis._reg_tab._waves,
+        )
+        set_visible(
+            visible("analysis.classification"),
+            analysis._path_tab._sub_stack, analysis._path_tab._btn_pca,
+            analysis._path_tab._btn_avg, analysis._path_tab._bt_panel,
+            analysis._path_tab._type_lbl, analysis._path_tab._manual_lbl,
+        )
+        set_visible(
+            visible("analysis.controls"),
+            analysis._global_tab._left.btn_start,
+            analysis._global_tab._left.cnt_eit,
+            analysis._global_tab._left.cnt_es,
+            analysis._global_tab._waves.btn_event,
+            analysis._reg_tab._bar,
+            analysis._path_tab._bar,
+            analysis._peep_tab._bar,
+        )
+
+        eit = self._screens["eit_settings"]
+        set_visible(
+            visible("eit_settings.acquisition"),
+            eit._row_current, eit._row_freq, eit._row_electrodes, eit._row_belts,
+        )
+        set_visible(
+            visible("eit_settings.visualization"), eit._grp_color, eit._color_map
+        )
+        set_visible(visible("eit_settings.pathology"), eit._grp_pathology)
+        set_visible(visible("eit_settings.diagnosis"), eit._grp_diagnosis_catalog)
+        set_visible(
+            visible("eit_settings.controls"),
+            eit._btn_start, eit._btn_reset, eit._btn_save,
+        )
+
+        reports = self._screens["reports"]
+        set_visible(visible("reports.saved"), reports._box_list)
+        set_visible(visible("reports.form"), reports._box_form)
+        set_visible(visible("reports.preview"), reports._box_preview)
+        set_visible(
+            visible("reports.controls"),
+            reports._btn_new, reports._btn_generate, reports._btn_start,
+            reports._btn_reset, reports._btn_print_bottom,
+        )
+
+        export = self._screens["export"]
+        set_visible(visible("export.format"), export._box_format)
+        set_visible(visible("export.categories"), export._box_categories)
+        set_visible(visible("export.history"), export._box_history)
+        set_visible(visible("export.summary"), export._privacy, export._estimate)
+        set_visible(
+            visible("export.controls"),
+            export._btn_start, export._btn_reset, export._btn_generate,
+        )
+
+        service = self._screens["service"]
+        set_visible(visible("service.title"), service._lbl_title)
+        set_visible(
+            visible("service.filters"),
+            service._lbl_session, service._lbl_filter, service._combo_filter,
+            service._combo_scope, service._edit_search,
+            service._lbl_period, service._lbl_date_to,
+            service._date_from, service._date_to,
+            service._btn_reset,
+        )
+        set_visible(
+            visible("service.events"),
+            service._hdr, service._events_scroll, service._lbl_empty,
+        )
+        set_visible(visible("service.controls"), service._btn_add)
+
+        system = self._screens["system"]
+        set_visible(visible("system.title"), system._lbl_title)
+        system._tabs.setTabVisible(0, visible("system.information"))
+        if not visible("system.information") and system._tabs.currentIndex() == 0:
+            system._tabs.setCurrentIndex(1)
+
+        debug = self._screens["debug"]
+        set_visible(visible("debug.duration"), debug._dur_bar)
+        set_visible(visible("debug.diagram"), debug._diagram)
+        set_visible(visible("debug.chart"), debug._chart)
+        set_visible(
+            visible("debug.status"),
+            debug._quality_status, debug._calibration_progress,
+        )
+        set_visible(
+            visible("debug.controls"), debug._btn_calibrate, debug._btn_start,
+        )
 
     def _wire_study_controls(self):
         main = self._screens["main"]
@@ -320,7 +506,7 @@ class MainWindow(QMainWindow):
             service.default_author,
             parent=self,
         )
-        if dialog.exec() != dialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.values()
         try:
@@ -404,9 +590,7 @@ class MainWindow(QMainWindow):
             button.setEnabled(enabled)
             button.setText(t("btn_stop") if running else t("btn_start"))
             if running:
-                button.setStyleSheet(
-                    f"QPushButton{{background:{C['alarm']};color:white;font-weight:bold;}}"
-                )
+                button.setStyleSheet(stop_button_style())
             else:
                 button.setStyleSheet(start_button_style())
         main = self._screens.get("main")
@@ -460,4 +644,6 @@ class MainWindow(QMainWindow):
             self._unsubscribe_study()
         if hasattr(self, "_unsubscribe_playback"):
             self._unsubscribe_playback()
+        if hasattr(self, "_unsubscribe_interface_settings"):
+            self._unsubscribe_interface_settings()
         super().closeEvent(event)

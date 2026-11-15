@@ -73,13 +73,19 @@ class DurationCounter(QWidget):
 
 
 class DurationCounterPair(QWidget):
-    """Две строки-счётчика (ЭИТ + ЭС), вертикально."""
+    """Два счётчика, расположенные вертикально или рядом друг с другом."""
 
-    def __init__(self, stacked: bool = False, large: bool = False, parent=None):
+    def __init__(
+        self,
+        stacked: bool = False,
+        large: bool = False,
+        horizontal: bool = False,
+        parent=None,
+    ):
         super().__init__(parent)
-        lay = QVBoxLayout(self)
+        lay = QHBoxLayout(self) if horizontal else QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(24 if horizontal else 4)
 
         self.cnt_eit = DurationCounter("param_eit_duration", stacked=stacked, large=large)
         self.cnt_es = DurationCounter("param_es_time", stacked=stacked, large=large)

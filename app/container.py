@@ -76,13 +76,28 @@ class ApplicationContainer:
             settings=eit_settings.current,
             roi_count=engineering_settings.current.roi_count,
             peak_detection_method=engineering_settings.current.peak_detection_method,
+            peep_silent_threshold_percent=(
+                engineering_settings.current.peep_silent_threshold_percent
+            ),
+            peep_analysis_interval_seconds=(
+                engineering_settings.current.peep_analysis_interval_seconds
+            ),
+            peep_gravity_angle_degrees=(
+                engineering_settings.current.peep_gravity_angle_degrees
+            ),
         )
-        engineering_settings.subscribe(
-            lambda settings: monitoring.set_aeration_configuration(
+        def apply_engineering_settings(settings):
+            monitoring.set_aeration_configuration(
                 roi_count=settings.roi_count,
                 peak_detection_method=settings.peak_detection_method,
             )
-        )
+            monitoring.configure_peep_analysis(
+                silent_threshold_percent=settings.peep_silent_threshold_percent,
+                analysis_interval_seconds=settings.peep_analysis_interval_seconds,
+                gravity_angle_degrees=settings.peep_gravity_angle_degrees,
+            )
+
+        engineering_settings.subscribe(apply_engineering_settings)
         diagnostics = list(resolved.diagnostics)
         technical_event(
             _logger,

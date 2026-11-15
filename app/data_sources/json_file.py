@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import math
 from pathlib import Path
 
 from ..config import DataMode
-from ..domain import AcquisitionSettings
-from .base import DataSource, DataSourceError, DataSourceState, DeviceDescriptor
+from ..domain import AcquisitionSettings, utc_now
+from .base import (
+    DataSource, DataSourceError, DataSourceState, DeviceDescriptor,
+    TimestampSource,
+)
 from .json_contract import (
     JSONMeasurementRecording,
     RawMeasurementFrame,
@@ -38,6 +42,7 @@ class JSONMeasurementDataSource(DataSource):
         simulated: bool = False,
         restart_on_connect: bool = False,
         loop_playback: bool = False,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self.path = Path(path).expanduser().resolve()
         self.recording: JSONMeasurementRecording = load_json_measurement_recording(
@@ -57,6 +62,8 @@ class JSONMeasurementDataSource(DataSource):
         self._index = 0
         self._restart_on_connect = restart_on_connect
         self._loop_playback = loop_playback
+        self._clock = clock
+        self._stream_started_at_utc: datetime | None = None
         self._playback_speed = 1.0
         self.playback_speed = playback_speed
 
@@ -90,7 +97,7 @@ class JSONMeasurementDataSource(DataSource):
     @property
     def position_seconds(self) -> float:
         if self._loop_playback:
-            return self._elapsed[self._index % len(self._frames)]
+            return self._index / self.frame_rate_hz
         if self._index >= len(self._frames):
             return self.duration_seconds
         return self._elapsed[self._index]
@@ -134,6 +141,7 @@ class JSONMeasurementDataSource(DataSource):
             raise DataSourceError("cannot connect while JSON playback is running")
         if self._restart_on_connect and self._state is DataSourceState.DISCONNECTED:
             self._index = 0
+            self._stream_started_at_utc = None
         self._state = DataSourceState.CONNECTED
 
     def disconnect(self) -> None:
@@ -154,6 +162,8 @@ class JSONMeasurementDataSource(DataSource):
         if self._state is not DataSourceState.CONFIGURED:
             raise DataSourceError("configure the JSON recording before playback")
         self._state = DataSourceState.RUNNING
+        if self._loop_playback and self._stream_started_at_utc is None:
+            self._stream_started_at_utc = self._clock()
 
     def stop(self) -> None:
         if self._state is DataSourceState.RUNNING:
@@ -174,16 +184,18 @@ class JSONMeasurementDataSource(DataSource):
         if self._index >= len(self._frames) and not self._loop_playback:
             self._state = DataSourceState.CONFIGURED
             raise JSONPlaybackComplete("JSON measurement playback is complete")
-        frame_index = self._index % len(self._frames)
-        cycle = self._index // len(self._frames)
+        stream_index = self._index
+        frame_index = stream_index % len(self._frames)
         frame = self._frames[frame_index]
-        if cycle:
+        if self._loop_playback:
+            assert self._stream_started_at_utc is not None
             frame = replace(
                 frame,
-                sequence_number=frame.sequence_number + cycle * len(self._frames),
-                timestamp_utc=frame.timestamp_utc + timedelta(
-                    seconds=cycle * len(self._frames) / self.frame_rate_hz
+                sequence_number=self._frames[0].sequence_number + stream_index,
+                timestamp_utc=self._stream_started_at_utc + timedelta(
+                    seconds=stream_index / self.frame_rate_hz
                 ),
+                timestamp_source=TimestampSource.SYNTHESIZED,
             )
         self._index += 1
         return frame

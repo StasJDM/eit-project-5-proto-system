@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
 import math
+import re
 from typing import TypeAlias
 from uuid import UUID, uuid4
 
@@ -160,6 +161,9 @@ class AcquisitionSettings:
     electrode_order: str = "right_ccw"
     measurement_sequence: str = "adjacent_fixed"
     two_color_visualization: bool = True
+    color_map_id: str = "medical_blue_amber"
+    custom_color_low: str = "#29b6d1"
+    custom_color_high: str = "#ffc857"
     pathology_detection: bool = True
     format_version: int = CURRENT_FORMAT_VERSION
 
@@ -206,6 +210,19 @@ class AcquisitionSettings:
             raise ValueError("unsupported measurement_sequence")
         if not isinstance(self.two_color_visualization, bool):
             raise TypeError("two_color_visualization must be bool")
+        from ..color_maps import CUSTOM_COLOR_MAP_ID, color_map_by_id
+
+        if (
+            self.color_map_id != CUSTOM_COLOR_MAP_ID
+            and color_map_by_id(self.color_map_id) is None
+        ):
+            raise ValueError("unsupported color_map_id")
+        for value, field_name in (
+            (self.custom_color_low, "custom_color_low"),
+            (self.custom_color_high, "custom_color_high"),
+        ):
+            if not isinstance(value, str) or re.fullmatch(r"#[0-9a-fA-F]{6}", value) is None:
+                raise ValueError(f"{field_name} must be a #RRGGBB colour")
         if not isinstance(self.pathology_detection, bool):
             raise TypeError("pathology_detection must be bool")
 
@@ -494,6 +511,7 @@ class TrendAggregate:
     algorithm_version: str
     simulated: bool
     quality_reason: str | None = None
+    metric_values: tuple[tuple[str, float | None], ...] = ()
     id: UUID = field(default_factory=uuid4)
     format_version: int = CURRENT_FORMAT_VERSION
 
@@ -521,11 +539,23 @@ class TrendAggregate:
         )
         for index, value in enumerate(self.roi_values):
             _validate_optional_number(value, f"roi_values[{index}]")
+        metric_names: set[str] = set()
+        for name, value in self.metric_values:
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("trend metric name must not be blank")
+            if name in metric_names:
+                raise ValueError(f"duplicate trend metric: {name}")
+            metric_names.add(name)
+            _validate_optional_number(value, f"metric_values[{name!r}]")
         if not isinstance(self.quality, DataQuality):
             raise TypeError("quality must be DataQuality")
         if not self.algorithm_version.strip():
             raise ValueError("algorithm_version must not be blank")
         _validate_optional_text(self.quality_reason, "quality_reason")
+
+    def metric_value(self, name: str) -> float | None:
+        """Return a persisted calculated metric without coupling storage to its list."""
+        return dict(self.metric_values).get(name)
 
 
 @dataclass(frozen=True, slots=True)

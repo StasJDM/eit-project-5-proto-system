@@ -61,6 +61,9 @@ def serialize_model(model: DomainModel) -> dict[str, Any]:
             "electrode_order": model.electrode_order,
             "measurement_sequence": model.measurement_sequence,
             "two_color_visualization": model.two_color_visualization,
+            "color_map_id": model.color_map_id,
+            "custom_color_low": model.custom_color_low,
+            "custom_color_high": model.custom_color_high,
             "pathology_detection": model.pathology_detection,
         }
     if isinstance(model, Patient):
@@ -172,6 +175,7 @@ def serialize_model(model: DomainModel) -> dict[str, Any]:
             "left_value": model.left_value,
             "roi_values": list(model.roi_values),
             "respiratory_rate_bpm": model.respiratory_rate_bpm,
+            "metric_values": [[name, value] for name, value in model.metric_values],
             "quality": model.quality.value,
             "quality_reason": model.quality_reason,
             "algorithm_version": model.algorithm_version,
@@ -247,6 +251,9 @@ def deserialize_model(data: dict[str, Any]) -> DomainModel:
             electrode_order=data.get("electrode_order", "right_ccw"),
             measurement_sequence=data.get("measurement_sequence", "adjacent_fixed"),
             two_color_visualization=data.get("two_color_visualization", True),
+            color_map_id=data.get("color_map_id", "medical_blue_amber"),
+            custom_color_low=data.get("custom_color_low", "#29b6d1"),
+            custom_color_high=data.get("custom_color_high", "#ffc857"),
             pathology_detection=data.get("pathology_detection", True),
             **kwargs,
         )
@@ -403,6 +410,10 @@ def deserialize_model(data: dict[str, Any]) -> DomainModel:
                 _required(data, "roi_values", list), "roi_values"
             )),
             respiratory_rate_bpm=_optional_number(data, "respiratory_rate_bpm"),
+            metric_values=tuple(
+                (str(item[0]), None if item[1] is None else float(item[1]))
+                for item in data.get("metric_values", [])
+            ),
             quality=DataQuality(data["quality"]),
             quality_reason=data.get("quality_reason"),
             algorithm_version=str(data["algorithm_version"]),

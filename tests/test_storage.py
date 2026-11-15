@@ -105,6 +105,7 @@ class StorageTest(unittest.TestCase):
                 self.assertEqual(loaded.studies.get(study.id), study)
                 self.assertEqual(loaded.sessions.get(session.id), session)
                 self.assertEqual(loaded.events.list_for_study(study.id), (event,))
+                self.assertEqual(loaded.events.list_all(), (event,))
                 self.assertEqual(loaded.reports.get(report.id), report)
                 self.assertEqual(loaded.settings.load(), {"language": "ru", "scale": 2})
                 self.assertEqual(reopened.schema_version, LATEST_SCHEMA_VERSION)

@@ -111,7 +111,7 @@ class ReconstructionCoreTest(unittest.TestCase):
         self.assertTrue(np.all(absolute >= 0.0))
         self.assertGreater(float(np.max(absolute)), 1.0)
         self.assertGreater(float(np.max(np.abs(image))), 0.0)
-        self.assertEqual(result.quality, DataQuality.DEGRADED)
+        self.assertEqual(result.quality, DataQuality.VALID)
         self.assertTrue(reconstructor.diagnostics.ready)
         self.assertFalse(reconstructor.diagnostics.assumptions_confirmed)
         fixed_normalization = (

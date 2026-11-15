@@ -8,14 +8,27 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QDialog, QButtonGroup, QRadioButton, QTabWidget,
-    QCheckBox, QSpinBox, QGroupBox, QScrollArea, QComboBox,
+    QFrame, QDialog, QButtonGroup, QRadioButton, QTabWidget, QGridLayout,
+    QCheckBox, QSpinBox, QGroupBox, QScrollArea, QComboBox, QStackedWidget,
+    QSlider,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QValidator
 
 from ..config import AppConfig, DataMode
-from ..application import EngineeringSettings, EngineeringSettingsService
+from ..application import (
+    INTERFACE_ELEMENTS,
+    INTERFACE_TABS,
+    REQUIRED_INTERFACE_TABS,
+    MAX_GRAPH_DISPLAY_PERIOD_SECONDS,
+    MIN_GRAPH_DISPLAY_PERIOD_SECONDS,
+    MIN_PEEP_ANALYSIS_INTERVAL_SECONDS,
+    MAX_PEEP_ANALYSIS_INTERVAL_SECONDS,
+    MIN_PEEP_SILENT_THRESHOLD_PERCENT,
+    MAX_PEEP_SILENT_THRESHOLD_PERCENT,
+    EngineeringSettings,
+    EngineeringSettingsService,
+)
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
 from ..i18n import t, i18n, LANGUAGES
 
@@ -189,6 +202,112 @@ _ROWS: list[tuple[str, str | None, bool, str]] = [
 
 _ROW_H = 48
 _NUM_W = 56
+_INTERFACE_TAB_KEYS = {
+    "main": "nav_main",
+    "patient": "nav_patient",
+    "trends": "nav_trends",
+    "analysis": "nav_analysis",
+    "eit_settings": "nav_eit_settings",
+    "reports": "nav_reports",
+    "export": "nav_export",
+    "service": "nav_service",
+    "system": "nav_system",
+    "debug": "nav_debug",
+}
+_ELEMENT_LABEL_KEYS = {
+    element: "sys_element_" + element.replace(".", "_")
+    for elements in INTERFACE_ELEMENTS.values()
+    for element in elements
+}
+
+
+def _single_line_tab_text(tab: str) -> str:
+    return t(_INTERFACE_TAB_KEYS[tab]).replace("\n", " ")
+
+
+def _engineering_tabs_style() -> str:
+    return f"""
+        QTabWidget::pane {{
+            border: 1px solid {C['border']};
+            border-radius: 6px;
+            top: -1px;
+            background: {C['bg_main']};
+        }}
+        QTabBar::tab {{
+            background: {C['bg_nav']};
+            color: {C['text_dim']};
+            border: 1px solid {C['border']};
+            border-bottom: none;
+            padding: 9px 22px;
+            min-width: 150px;
+            min-height: 24px;
+            font-size: {FONT_BASE}px;
+            font-weight: 500;
+        }}
+        QTabBar::tab:first {{ border-top-left-radius: 6px; }}
+        QTabBar::tab:last {{ border-top-right-radius: 6px; }}
+        QTabBar::tab:selected {{
+            background: {C['blue']};
+            color: white;
+            font-weight: bold;
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: {C['nav_hover']};
+            color: {C['text']};
+        }}
+    """
+
+
+def _visibility_checkbox_style() -> str:
+    return f"""
+        QCheckBox {{
+            background: {C['bg_card']};
+            color: {C['text']};
+            border: 1px solid {C['border']};
+            border-radius: 6px;
+            padding: 8px 12px;
+            spacing: 10px;
+            min-height: 28px;
+            font-size: {FONT_SMALL}px;
+        }}
+        QCheckBox:hover {{ border-color: {C['blue_light']}; }}
+        QCheckBox:checked {{
+            background: {C['nav_hover']};
+            border-color: {C['blue_light']};
+        }}
+        QCheckBox:disabled {{
+            background: {C['bg_panel']};
+            color: {C['text_dim']};
+            border-color: {C['border']};
+        }}
+        QCheckBox::indicator {{
+            width: 18px;
+            height: 18px;
+        }}
+    """
+
+
+def _visibility_combo_style() -> str:
+    return f"""
+        QComboBox {{
+            background: {C['bg_card']};
+            color: {C['text']};
+            border: 1px solid {C['blue_light']};
+            border-radius: 6px;
+            padding: 8px 12px;
+            min-height: 30px;
+            font-size: {FONT_BASE}px;
+        }}
+        QComboBox:hover {{ background: {C['nav_hover']}; }}
+        QComboBox::drop-down {{ border: none; width: 30px; }}
+        QComboBox QAbstractItemView {{
+            background: {C['bg_panel']};
+            color: {C['text']};
+            border: 1px solid {C['border_light']};
+            selection-background-color: {C['blue']};
+            padding: 4px;
+        }}
+    """
 
 
 # ── System info screen ────────────────────────────────────────────────────────
@@ -225,6 +344,7 @@ class SystemInfoScreen(QWidget):
         outer.addWidget(sep)
 
         self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(_engineering_tabs_style())
         self._info_tab = QWidget()
         self._engineering_tab = QWidget()
         self._tabs.addTab(self._info_tab, t("sys_tab_information"))
@@ -241,11 +361,11 @@ class SystemInfoScreen(QWidget):
         table_lay = QVBoxLayout(table)
         table_lay.setContentsMargins(0, 0, 0, 0)
         table_lay.setSpacing(0)
-        info_scroll = QScrollArea()
-        info_scroll.setWidgetResizable(True)
-        info_scroll.setFrameShape(QFrame.NoFrame)
-        info_scroll.setWidget(table)
-        info_lay.addWidget(info_scroll)
+        self._info_scroll = QScrollArea()
+        self._info_scroll.setWidgetResizable(True)
+        self._info_scroll.setFrameShape(QFrame.NoFrame)
+        self._info_scroll.setWidget(table)
+        info_lay.addWidget(self._info_scroll)
 
         # Header row
         self._lbl_h_num, self._lbl_h_param, self._lbl_h_value = \
@@ -275,7 +395,31 @@ class SystemInfoScreen(QWidget):
         i18n.language_changed.connect(self.retranslate)
 
     def _build_engineering_tab(self) -> None:
-        layout = QVBoxLayout(self._engineering_tab)
+        outer = QVBoxLayout(self._engineering_tab)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        self._engineering_sections = QTabWidget()
+        self._engineering_sections.setStyleSheet(_engineering_tabs_style())
+        self._engineering_general_tab = QWidget()
+        self._engineering_trends_tab = QWidget()
+        self._engineering_peep_tab = QWidget()
+        self._engineering_visibility_tab = QWidget()
+        self._engineering_sections.addTab(
+            self._engineering_general_tab, t("sys_engineering_tab_general")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_trends_tab, t("sys_engineering_tab_trends")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_peep_tab, t("sys_engineering_tab_peep")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_visibility_tab, t("sys_engineering_tab_visibility")
+        )
+        outer.addWidget(self._engineering_sections, stretch=1)
+
+        layout = QVBoxLayout(self._engineering_general_tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
 
@@ -308,10 +452,62 @@ class SystemInfoScreen(QWidget):
         layout.addWidget(self._mode_group)
         layout.addLayout(roi_row)
 
+        graph_period_row = QHBoxLayout()
+        self._graph_period_label = QLabel(t("sys_engineering_graph_period"))
+        graph_period_row.addWidget(self._graph_period_label)
+        self._graph_period_slider = QSlider(Qt.Horizontal)
+        self._graph_period_slider.setObjectName("graph_period_slider")
+        self._graph_period_slider.setStyleSheet(f"""
+            QSlider#graph_period_slider::groove:horizontal {{
+                height: 6px;
+                background: {C['border_light']};
+                border-radius: 3px;
+            }}
+            QSlider#graph_period_slider::sub-page:horizontal {{
+                background: {C['blue_light']};
+                border-radius: 3px;
+            }}
+            QSlider#graph_period_slider::add-page:horizontal {{
+                background: {C['border_light']};
+                border-radius: 3px;
+            }}
+            QSlider#graph_period_slider::handle:horizontal {{
+                width: 18px;
+                margin: -6px 0;
+                background: {C['text']};
+                border: 2px solid {C['blue_light']};
+                border-radius: 9px;
+            }}
+            QSlider#graph_period_slider::handle:horizontal:hover {{
+                background: white;
+            }}
+        """)
+        self._graph_period_slider.setRange(
+            MIN_GRAPH_DISPLAY_PERIOD_SECONDS,
+            MAX_GRAPH_DISPLAY_PERIOD_SECONDS,
+        )
+        self._graph_period_slider.setSingleStep(1)
+        self._graph_period_slider.setPageStep(10)
+        self._graph_period_slider.setTickInterval(10)
+        self._graph_period_slider.setTickPosition(QSlider.TicksBelow)
+        self._graph_period_slider.setMinimumWidth(320)
+        graph_period_row.addWidget(self._graph_period_slider, stretch=1)
+        self._graph_period_value = QLabel()
+        self._graph_period_value.setFixedWidth(80)
+        self._graph_period_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        graph_period_row.addWidget(self._graph_period_value)
+        self._graph_period_slider.valueChanged.connect(
+            self._update_graph_period_value
+        )
+        layout.addLayout(graph_period_row)
+
         detector_row = QHBoxLayout()
         self._peak_detector_label = QLabel(t("sys_engineering_peak_detector"))
         detector_row.addWidget(self._peak_detector_label)
         self._peak_detector_combo = QComboBox()
+        self._peak_detector_combo.addItem(
+            t("sys_peak_detector_mad_mean"), "mad_mean"
+        )
         self._peak_detector_combo.addItem(
             t("sys_peak_detector_derivative"), "derivative"
         )
@@ -327,13 +523,26 @@ class SystemInfoScreen(QWidget):
         layout.addWidget(self._engineering_hint)
         layout.addStretch()
 
+        self._build_trends_configuration_tab()
+        self._build_peep_configuration_tab()
+        self._build_visibility_tab()
+
         button_row = QHBoxLayout()
         button_row.addStretch()
         self._engineering_apply = QPushButton(t("sys_engineering_apply"))
-        self._engineering_apply.setMinimumWidth(180)
+        self._engineering_apply.setFixedSize(220, 44)
+        self._engineering_apply.setStyleSheet(f"""
+            QPushButton {{
+                background:{C['blue']};color:white;
+                border:1px solid {C['blue_light']};border-radius:6px;
+                font-size:{FONT_BTN}px;font-weight:bold;padding:8px 20px;
+            }}
+            QPushButton:hover {{ background:{C['blue_hover']}; }}
+            QPushButton:pressed {{ background:{C['blue_dark']}; }}
+        """)
         self._engineering_apply.clicked.connect(self._save_engineering_settings)
         button_row.addWidget(self._engineering_apply)
-        layout.addLayout(button_row)
+        outer.addLayout(button_row)
 
         current = (
             self._engineering_settings.current
@@ -342,14 +551,235 @@ class SystemInfoScreen(QWidget):
         )
         self._load_engineering_settings(current)
 
+    def _build_trends_configuration_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_trends_tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
+
+        point_row = QHBoxLayout()
+        self._trend_point_mode_label = QLabel(t("sys_engineering_trend_point_mode"))
+        point_row.addWidget(self._trend_point_mode_label)
+        self._trend_point_mode_combo = QComboBox()
+        self._trend_point_mode_combo.addItem(
+            t("sys_trend_points_interval"), "interval"
+        )
+        self._trend_point_mode_combo.addItem(
+            t("sys_trend_points_breath_cycle"), "breath_cycle"
+        )
+        self._trend_point_mode_combo.setMinimumWidth(360)
+        point_row.addWidget(self._trend_point_mode_combo)
+        point_row.addStretch()
+        layout.addLayout(point_row)
+
+        downsampling_row = QHBoxLayout()
+        self._trend_downsampling_label = QLabel(
+            t("sys_engineering_trend_downsampling")
+        )
+        downsampling_row.addWidget(self._trend_downsampling_label)
+        self._trend_downsampling_combo = QComboBox()
+        self._trend_downsampling_combo.addItem(
+            t("sys_trend_downsampling_none"), "none"
+        )
+        self._trend_downsampling_combo.addItem(
+            t("sys_trend_downsampling_adult"), "manual_adult"
+        )
+        self._trend_downsampling_combo.addItem(
+            t("sys_trend_downsampling_infant"), "manual_infant"
+        )
+        self._trend_downsampling_combo.setMinimumWidth(360)
+        downsampling_row.addWidget(self._trend_downsampling_combo)
+        downsampling_row.addStretch()
+        layout.addLayout(downsampling_row)
+
+        self._trend_configuration_hint = QLabel(
+            t("sys_engineering_trend_configuration_hint")
+        )
+        self._trend_configuration_hint.setWordWrap(True)
+        self._trend_configuration_hint.setStyleSheet(f"color:{C['text_dim']};")
+        layout.addWidget(self._trend_configuration_hint)
+        layout.addStretch()
+
+    def _build_peep_configuration_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_peep_tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
+
+        threshold_row = QHBoxLayout()
+        self._peep_threshold_label = QLabel(t("sys_engineering_peep_threshold"))
+        threshold_row.addWidget(self._peep_threshold_label)
+        self._peep_threshold_spin = QSpinBox()
+        self._peep_threshold_spin.setRange(
+            MIN_PEEP_SILENT_THRESHOLD_PERCENT,
+            MAX_PEEP_SILENT_THRESHOLD_PERCENT,
+        )
+        self._peep_threshold_spin.setSuffix(" % RTS")
+        threshold_row.addWidget(self._peep_threshold_spin)
+        threshold_row.addStretch()
+        layout.addLayout(threshold_row)
+
+        interval_row = QHBoxLayout()
+        self._peep_interval_label = QLabel(t("sys_engineering_peep_interval"))
+        interval_row.addWidget(self._peep_interval_label)
+        self._peep_interval_spin = QSpinBox()
+        self._peep_interval_spin.setRange(
+            MIN_PEEP_ANALYSIS_INTERVAL_SECONDS,
+            MAX_PEEP_ANALYSIS_INTERVAL_SECONDS,
+        )
+        self._peep_interval_spin.setSuffix(" " + t("analysis_seconds_short"))
+        interval_row.addWidget(self._peep_interval_spin)
+        interval_row.addStretch()
+        layout.addLayout(interval_row)
+
+        gravity_row = QHBoxLayout()
+        self._peep_gravity_label = QLabel(t("sys_engineering_peep_gravity"))
+        gravity_row.addWidget(self._peep_gravity_label)
+        self._peep_gravity_spin = QSpinBox()
+        self._peep_gravity_spin.setRange(-180, 180)
+        self._peep_gravity_spin.setSuffix("°")
+        gravity_row.addWidget(self._peep_gravity_spin)
+        gravity_row.addStretch()
+        layout.addLayout(gravity_row)
+
+        self._peep_configuration_hint = QLabel(t("sys_engineering_peep_hint"))
+        self._peep_configuration_hint.setWordWrap(True)
+        self._peep_configuration_hint.setStyleSheet(f"color:{C['text_dim']};")
+        layout.addWidget(self._peep_configuration_hint)
+        layout.addStretch()
+
+    def _build_visibility_tab(self) -> None:
+        tab_layout = QVBoxLayout(self._engineering_visibility_tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        scroll.setWidget(content)
+        tab_layout.addWidget(scroll)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(14)
+
+        self._navigation_visibility_group = QGroupBox(
+            t("sys_engineering_navigation_visibility")
+        )
+        self._navigation_visibility_group.setStyleSheet(
+            f"QGroupBox {{ border:1px solid {C['border']}; border-radius:8px; "
+            f"margin-top:12px; padding-top:10px; font-weight:bold; }} "
+            f"QGroupBox::title {{ subcontrol-origin:margin; left:14px; padding:0 6px; }}"
+        )
+        navigation_layout = QGridLayout(self._navigation_visibility_group)
+        navigation_layout.setContentsMargins(14, 20, 14, 14)
+        navigation_layout.setHorizontalSpacing(10)
+        navigation_layout.setVerticalSpacing(10)
+        self._tab_visibility_checks: dict[str, QCheckBox] = {}
+        for index, tab in enumerate(INTERFACE_TABS):
+            checkbox = QCheckBox(t(_INTERFACE_TAB_KEYS[tab]))
+            checkbox.setStyleSheet(_visibility_checkbox_style())
+            checkbox.setEnabled(tab not in REQUIRED_INTERFACE_TABS)
+            navigation_layout.addWidget(checkbox, index // 5, index % 5)
+            self._tab_visibility_checks[tab] = checkbox
+        layout.addWidget(self._navigation_visibility_group)
+
+        self._element_visibility_group = QGroupBox(
+            t("sys_engineering_element_visibility")
+        )
+        self._element_visibility_group.setStyleSheet(
+            f"QGroupBox {{ border:1px solid {C['border']}; border-radius:8px; "
+            f"margin-top:12px; padding-top:10px; font-weight:bold; }} "
+            f"QGroupBox::title {{ subcontrol-origin:margin; left:14px; padding:0 6px; }}"
+        )
+        element_group_layout = QVBoxLayout(self._element_visibility_group)
+        element_group_layout.setContentsMargins(14, 20, 14, 14)
+        element_group_layout.setSpacing(12)
+
+        selector_row = QHBoxLayout()
+        selector_row.setSpacing(12)
+        self._element_visibility_label = QLabel(t("sys_engineering_configured_tab"))
+        self._element_visibility_label.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;font-weight:500;"
+        )
+        self._element_visibility_label.setFixedWidth(220)
+        self._element_visibility_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        selector_row.addWidget(self._element_visibility_label)
+        self._element_visibility_selector = QComboBox()
+        self._element_visibility_selector.setStyleSheet(_visibility_combo_style())
+        self._element_visibility_selector.setFixedHeight(48)
+        self._element_visibility_selector.setMaximumWidth(520)
+        self._element_visibility_selector.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._element_visibility_selector.setMinimumContentsLength(24)
+        selector_row.addWidget(self._element_visibility_selector)
+        selector_row.addStretch()
+        element_group_layout.addLayout(selector_row)
+
+        self._element_visibility_stack = QStackedWidget()
+        self._element_visibility_stack.setStyleSheet(
+            f"QStackedWidget {{ background:{C['bg_panel']}; border:1px solid "
+            f"{C['border']}; border-radius:6px; }}"
+        )
+        self._element_visibility_checks: dict[str, QCheckBox] = {}
+        self._element_visibility_pages: dict[str, QWidget] = {}
+        for tab in INTERFACE_TABS:
+            page = QWidget()
+            page.setStyleSheet("background: transparent;")
+            page_layout = QGridLayout(page)
+            page_layout.setContentsMargins(12, 12, 12, 12)
+            page_layout.setHorizontalSpacing(10)
+            page_layout.setVerticalSpacing(10)
+            for index, element in enumerate(INTERFACE_ELEMENTS[tab]):
+                checkbox = QCheckBox(t(_ELEMENT_LABEL_KEYS[element]))
+                checkbox.setStyleSheet(_visibility_checkbox_style())
+                page_layout.addWidget(checkbox, index // 2, index % 2)
+                self._element_visibility_checks[element] = checkbox
+            page_layout.setRowStretch((len(INTERFACE_ELEMENTS[tab]) + 1) // 2, 1)
+            self._element_visibility_selector.addItem(_single_line_tab_text(tab), tab)
+            self._element_visibility_stack.addWidget(page)
+            self._element_visibility_pages[tab] = page
+        self._element_visibility_selector.currentIndexChanged.connect(
+            self._element_visibility_stack.setCurrentIndex
+        )
+        # Kept as a compatibility alias for code that only queries page count.
+        self._element_visibility_tabs = self._element_visibility_stack
+        element_group_layout.addWidget(self._element_visibility_stack, stretch=1)
+        layout.addWidget(self._element_visibility_group, stretch=1)
+
+        # Backward-compatible aliases used by older integrations and tests.
+        self._show_main_trends_check = self._element_visibility_checks["main.trends"]
+        self._show_main_tvi_check = self._element_visibility_checks["main.tvi"]
+
     def _load_engineering_settings(self, settings: EngineeringSettings) -> None:
         for mode, checkbox in self._mode_checks.items():
             checkbox.setChecked(mode in settings.work_modes)
         self._roi_spin.setValue(settings.roi_count)
+        self._graph_period_slider.setValue(settings.graph_display_period_seconds)
         detector_index = self._peak_detector_combo.findData(
             settings.peak_detection_method
         )
         self._peak_detector_combo.setCurrentIndex(max(0, detector_index))
+        point_mode_index = self._trend_point_mode_combo.findData(
+            settings.trend_point_mode
+        )
+        self._trend_point_mode_combo.setCurrentIndex(max(0, point_mode_index))
+        downsampling_index = self._trend_downsampling_combo.findData(
+            settings.trend_downsampling_mode
+        )
+        self._trend_downsampling_combo.setCurrentIndex(
+            max(0, downsampling_index)
+        )
+        self._peep_threshold_spin.setValue(settings.peep_silent_threshold_percent)
+        self._peep_interval_spin.setValue(settings.peep_analysis_interval_seconds)
+        self._peep_gravity_spin.setValue(settings.peep_gravity_angle_degrees)
+        for tab, checkbox in self._tab_visibility_checks.items():
+            checkbox.setChecked(tab in settings.visible_tabs)
+        for element, checkbox in self._element_visibility_checks.items():
+            checkbox.setChecked(settings.is_element_visible(element))
 
     def _validate_mode_selection(self, mode: str, checked: bool) -> None:
         if not checked and not any(box.isChecked() for box in self._mode_checks.values()):
@@ -362,6 +792,27 @@ class SystemInfoScreen(QWidget):
             ),
             roi_count=self._roi_spin.value(),
             peak_detection_method=str(self._peak_detector_combo.currentData()),
+            graph_display_period_seconds=self._graph_period_slider.value(),
+            trend_point_mode=str(self._trend_point_mode_combo.currentData()),
+            trend_downsampling_mode=str(
+                self._trend_downsampling_combo.currentData()
+            ),
+            peep_silent_threshold_percent=self._peep_threshold_spin.value(),
+            peep_analysis_interval_seconds=self._peep_interval_spin.value(),
+            peep_gravity_angle_degrees=self._peep_gravity_spin.value(),
+            visible_tabs=tuple(
+                tab
+                for tab in INTERFACE_TABS
+                if self._tab_visibility_checks[tab].isChecked()
+            ),
+            show_main_trends=self._show_main_trends_check.isChecked(),
+            show_main_tvi=self._show_main_tvi_check.isChecked(),
+            visible_elements=tuple(
+                element
+                for tab in INTERFACE_TABS
+                for element in INTERFACE_ELEMENTS[tab]
+                if self._element_visibility_checks[element].isChecked()
+            ),
         )
         if self._engineering_settings is not None:
             self._engineering_settings.save(settings)
@@ -369,6 +820,12 @@ class SystemInfoScreen(QWidget):
         QTimer.singleShot(
             1500,
             lambda: self._engineering_apply.setText(t("sys_engineering_apply")),
+        )
+
+    def _update_graph_period_value(self, seconds: int | None = None) -> None:
+        value = self._graph_period_slider.value() if seconds is None else seconds
+        self._graph_period_value.setText(
+            t("sys_engineering_graph_period_value").format(seconds=value)
         )
 
     # ── Row builders ──────────────────────────────────────────────────────────
@@ -506,6 +963,10 @@ class SystemInfoScreen(QWidget):
         self._lbl_h_value.setText(t("sys_tbl_value"))
         self._tabs.setTabText(0, t("sys_tab_information"))
         self._tabs.setTabText(1, t("sys_tab_engineering"))
+        self._engineering_sections.setTabText(0, t("sys_engineering_tab_general"))
+        self._engineering_sections.setTabText(1, t("sys_engineering_tab_trends"))
+        self._engineering_sections.setTabText(2, t("sys_engineering_tab_peep"))
+        self._engineering_sections.setTabText(3, t("sys_engineering_tab_visibility"))
         self._mode_group.setTitle(t("sys_engineering_modes"))
         for mode, key in (
             ("adult", "sys_mode_adult"),
@@ -514,12 +975,55 @@ class SystemInfoScreen(QWidget):
         ):
             self._mode_checks[mode].setText(t(key))
         self._roi_label.setText(t("sys_engineering_roi_count"))
+        self._graph_period_label.setText(t("sys_engineering_graph_period"))
+        self._update_graph_period_value()
         self._peak_detector_label.setText(t("sys_engineering_peak_detector"))
         self._peak_detector_combo.setItemText(
-            0, t("sys_peak_detector_derivative")
+            0, t("sys_peak_detector_mad_mean")
         )
-        self._peak_detector_combo.setItemText(1, t("sys_peak_detector_legacy"))
+        self._peak_detector_combo.setItemText(1, t("sys_peak_detector_derivative"))
+        self._peak_detector_combo.setItemText(2, t("sys_peak_detector_legacy"))
+        self._trend_point_mode_label.setText(t("sys_engineering_trend_point_mode"))
+        self._trend_point_mode_combo.setItemText(0, t("sys_trend_points_interval"))
+        self._trend_point_mode_combo.setItemText(
+            1, t("sys_trend_points_breath_cycle")
+        )
+        self._trend_downsampling_label.setText(
+            t("sys_engineering_trend_downsampling")
+        )
+        self._trend_downsampling_combo.setItemText(
+            0, t("sys_trend_downsampling_none")
+        )
+        self._trend_downsampling_combo.setItemText(
+            1, t("sys_trend_downsampling_adult")
+        )
+        self._trend_downsampling_combo.setItemText(
+            2, t("sys_trend_downsampling_infant")
+        )
+        self._trend_configuration_hint.setText(
+            t("sys_engineering_trend_configuration_hint")
+        )
+        self._peep_threshold_label.setText(t("sys_engineering_peep_threshold"))
+        self._peep_interval_label.setText(t("sys_engineering_peep_interval"))
+        self._peep_interval_spin.setSuffix(" " + t("analysis_seconds_short"))
+        self._peep_gravity_label.setText(t("sys_engineering_peep_gravity"))
+        self._peep_configuration_hint.setText(t("sys_engineering_peep_hint"))
         self._engineering_hint.setText(t("sys_engineering_hint"))
+        self._navigation_visibility_group.setTitle(
+            t("sys_engineering_navigation_visibility")
+        )
+        for tab, checkbox in self._tab_visibility_checks.items():
+            checkbox.setText(t(_INTERFACE_TAB_KEYS[tab]))
+        self._element_visibility_group.setTitle(
+            t("sys_engineering_element_visibility")
+        )
+        self._element_visibility_label.setText(t("sys_engineering_configured_tab"))
+        for index, tab in enumerate(INTERFACE_TABS):
+            self._element_visibility_selector.setItemText(
+                index, _single_line_tab_text(tab)
+            )
+        for element, checkbox in self._element_visibility_checks.items():
+            checkbox.setText(t(_ELEMENT_LABEL_KEYS[element]))
         self._engineering_apply.setText(t("sys_engineering_apply"))
 
         for lbl_key, lbl in self._param_lbls:

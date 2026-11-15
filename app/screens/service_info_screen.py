@@ -12,12 +12,13 @@ from datetime import datetime, timezone
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QComboBox, QDialog, QTextEdit, QLineEdit, QDateTimeEdit,
-    QSizePolicy, QMessageBox,
+    QSizePolicy, QMessageBox, QGridLayout,
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 
 from ..application import (
-    AdverseEventError, AdverseEventService, EventMarkerError, EventMarkerService,
+    DEFAULT_OPERATOR_NAME, AdverseEventError, AdverseEventService,
+    EventMarkerError, EventMarkerService,
 )
 from ..domain import Event, EventCategory
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
@@ -48,8 +49,8 @@ class AddEventDialog(QDialog):
     """Модальный диалог ввода сведений о событии через текстовые поля."""
 
     def __init__(
-        self, parent=None, *, default_author: str = "local-operator", original=None,
-        event_types=None,
+        self, parent=None, *, default_author: str = DEFAULT_OPERATOR_NAME, original=None,
+        event_types=None, default_occurred_at_utc: datetime | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(t("svc_dlg_title"))
@@ -115,7 +116,11 @@ class AddEventDialog(QDialog):
         row_dt = QHBoxLayout()
         lbl_dt = QLabel(t("svc_dlg_datetime"))
         lbl_dt.setFixedWidth(140)
-        self._edit_dt = QLineEdit(datetime.now().strftime("%d.%m.%Y  %H:%M:%S"))
+        default_occurred = (
+            default_occurred_at_utc.astimezone()
+            if default_occurred_at_utc is not None else datetime.now().astimezone()
+        )
+        self._edit_dt = QLineEdit(default_occurred.strftime("%d.%m.%Y  %H:%M:%S"))
         row_dt.addWidget(lbl_dt)
         row_dt.addWidget(self._edit_dt)
         lay.addLayout(row_dt)
@@ -273,7 +278,7 @@ class _EventRow(QFrame):
         desc_lbl.setContentsMargins(10, 4, 10, 4)
         lay.addWidget(desc_lbl, stretch=1)
         source_event = event.get("event")
-        if source_event is not None:
+        if source_event is not None and event.get("can_correct", True):
             correction = QPushButton(t("marker_correction"))
             correction.setFixedWidth(110)
             correction.clicked.connect(
@@ -340,6 +345,7 @@ class ServiceInfoScreen(QWidget):
         super().__init__(parent)
         self._marker_service = marker_service
         self._adverse_event_service = adverse_event_service
+        self._all_studies = False
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         self._events: list[dict] = self._load_events()
@@ -364,21 +370,38 @@ class ServiceInfoScreen(QWidget):
         outer.addWidget(sep)
 
         # ── Session label ────────────────────────────────────────────────────
+        self._scope_row = QWidget()
+        scope_lay = QHBoxLayout(self._scope_row)
+        scope_lay.setContentsMargins(0, 0, 0, 0)
+        scope_lay.setSpacing(12)
         self._lbl_session = QLabel(t("svc_session_label"))
         self._lbl_session.setStyleSheet(
             f"color:{C['text_dim']};font-size:{_SVC_LABEL_FONT}px;background:transparent;"
         )
-        outer.addWidget(self._lbl_session)
+        scope_lay.addWidget(self._lbl_session)
+        scope_lay.addStretch()
+        self._combo_scope = QComboBox()
+        self._combo_scope.setFixedWidth(250)
+        self._combo_scope.addItem(t("svc_scope_current"), False)
+        self._combo_scope.addItem(t("svc_scope_all"), True)
+        self._combo_scope.currentIndexChanged.connect(self._on_scope_changed)
+        scope_lay.addWidget(self._combo_scope)
+        outer.addWidget(self._scope_row)
 
         # ── Toolbar (filter + add button) ─────────────────────────────────────
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
+        self._toolbar = QWidget()
+        toolbar = QGridLayout(self._toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setHorizontalSpacing(12)
+        toolbar.setVerticalSpacing(10)
+        toolbar.setColumnStretch(2, 1)
+        toolbar.setColumnStretch(3, 1)
 
         self._lbl_filter = QLabel(t("svc_filter_type"))
         self._lbl_filter.setStyleSheet(
             f"color:{C['text_dim']};font-size:{_SVC_LABEL_FONT}px;background:transparent;"
         )
-        toolbar.addWidget(self._lbl_filter)
+        toolbar.addWidget(self._lbl_filter, 0, 0)
 
         self._combo_filter = QComboBox()
         self._combo_filter.setFixedWidth(220)
@@ -402,29 +425,43 @@ class ServiceInfoScreen(QWidget):
         """)
         self._rebuild_combo()
         self._combo_filter.currentIndexChanged.connect(self._on_filter_changed)
-        toolbar.addWidget(self._combo_filter)
+        toolbar.addWidget(self._combo_filter, 0, 1)
 
         self._edit_search = QLineEdit()
         self._edit_search.setPlaceholderText(t("svc_search_placeholder"))
-        self._edit_search.setFixedWidth(180)
+        self._edit_search.setMinimumWidth(220)
         self._edit_search.textChanged.connect(self._on_search_changed)
-        toolbar.addWidget(self._edit_search)
+        toolbar.addWidget(self._edit_search, 0, 2, 1, 2)
+
+        self._lbl_period = QLabel(t("svc_filter_period"))
+        self._lbl_period.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_BASE}px;background:transparent;"
+        )
+        toolbar.addWidget(self._lbl_period, 1, 0)
 
         self._date_from = QDateTimeEdit()
         self._date_from.setDisplayFormat("dd.MM.yyyy HH:mm")
         self._date_from.setCalendarPopup(True)
+        self._date_from.setMinimumWidth(210)
         self._date_from.setDateTime(datetime(2000, 1, 1))
         self._date_from.dateTimeChanged.connect(lambda _value: self._rebuild_list())
-        toolbar.addWidget(self._date_from)
+        toolbar.addWidget(self._date_from, 1, 1)
+        self._lbl_date_to = QLabel(t("svc_filter_to"))
+        self._lbl_date_to.setAlignment(Qt.AlignCenter)
+        self._lbl_date_to.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_BASE}px;background:transparent;"
+        )
+        toolbar.addWidget(self._lbl_date_to, 1, 2)
         self._date_to = QDateTimeEdit()
         self._date_to.setDisplayFormat("dd.MM.yyyy HH:mm")
         self._date_to.setCalendarPopup(True)
+        self._date_to.setMinimumWidth(210)
         self._date_to.setDateTime(datetime.now().replace(hour=23, minute=59, second=59))
         self._date_to.dateTimeChanged.connect(lambda _value: self._rebuild_list())
-        toolbar.addWidget(self._date_to)
+        toolbar.addWidget(self._date_to, 1, 3)
 
         self._btn_reset = QPushButton(t("svc_btn_reset_filter"))
-        self._btn_reset.setFixedHeight(32)
+        self._btn_reset.setFixedHeight(42)
         self._btn_reset.setStyleSheet(f"""
             QPushButton {{
                 background-color: {C['bg_nav']};
@@ -437,12 +474,11 @@ class ServiceInfoScreen(QWidget):
             QPushButton:hover {{ background-color: {C['nav_hover']}; }}
         """)
         self._btn_reset.clicked.connect(self._reset_filter)
-        toolbar.addWidget(self._btn_reset)
-
-        toolbar.addStretch()
+        toolbar.addWidget(self._btn_reset, 1, 4)
 
         self._btn_add = QPushButton(t("svc_btn_add"))
-        self._btn_add.setFixedHeight(32)
+        self._btn_add.setFixedHeight(42)
+        self._btn_add.setMinimumWidth(230)
         self._btn_add.setStyleSheet(f"""
             QPushButton {{
                 background-color: {C['ok']};
@@ -457,19 +493,19 @@ class ServiceInfoScreen(QWidget):
             QPushButton:pressed {{ background-color: #1b5e20; }}
         """)
         self._btn_add.clicked.connect(self._open_add_dialog)
-        toolbar.addWidget(self._btn_add)
+        toolbar.addWidget(self._btn_add, 0, 4)
 
-        outer.addLayout(toolbar)
+        outer.addWidget(self._toolbar)
 
         # ── Table header ──────────────────────────────────────────────────────
         self._hdr = self._build_header()
         outer.addWidget(self._hdr)
 
         # ── Scrollable event list ─────────────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"""
+        self._events_scroll = QScrollArea()
+        self._events_scroll.setWidgetResizable(True)
+        self._events_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._events_scroll.setStyleSheet(f"""
             QScrollArea {{ border: none; background: transparent; }}
             QScrollBar:vertical {{
                 background: {C['bg_main']};
@@ -490,8 +526,8 @@ class ServiceInfoScreen(QWidget):
         self._list_layout.setContentsMargins(0, 0, 0, 0)
         self._list_layout.setSpacing(0)
 
-        scroll.setWidget(self._list_container)
-        outer.addWidget(scroll, stretch=1)
+        self._events_scroll.setWidget(self._list_container)
+        outer.addWidget(self._events_scroll, stretch=1)
 
         # ── Empty-state label ─────────────────────────────────────────────────
         self._lbl_empty = QLabel(t("svc_no_events"))
@@ -603,6 +639,13 @@ class ServiceInfoScreen(QWidget):
         self._filter_type = self._combo_filter.itemData(index)
         self._rebuild_list()
 
+    def _on_scope_changed(self, index: int):
+        self._all_studies = bool(self._combo_scope.itemData(index))
+        self._lbl_session.setText(t(
+            "svc_all_studies_label" if self._all_studies else "svc_session_label"
+        ))
+        self.refresh()
+
     def _reset_filter(self):
         self._combo_filter.setCurrentIndex(0)
         self._edit_search.clear()
@@ -622,7 +665,10 @@ class ServiceInfoScreen(QWidget):
         if service is None:
             return
         dlg = AddEventDialog(
-            self, default_author=service.default_author, event_types=_ADVERSE_TYPE_KEYS
+            self,
+            default_author=service.default_author,
+            event_types=_ADVERSE_TYPE_KEYS,
+            default_occurred_at_utc=service.default_occurred_at_utc,
         )
         if dlg.exec() != QDialog.Accepted:
             return
@@ -739,9 +785,15 @@ class ServiceInfoScreen(QWidget):
         }
         result = []
         if self._adverse_event_service is not None:
-            events = self._adverse_event_service.list_current()
+            events = (
+                self._adverse_event_service.list_all()
+                if self._all_studies
+                else self._adverse_event_service.list_current()
+            )
+            current_study_id = self._adverse_event_service.current_study_id
         else:
             events = self._marker_service.list_for_current_study()
+            current_study_id = self._marker_service.current_study_id
         adverse_type_keys = {
             "technical_error": "svc_type_tech_error",
             "adverse_event": "svc_type_adverse_event",
@@ -753,14 +805,19 @@ class ServiceInfoScreen(QWidget):
                 f"{t('marker_corrects')} {str(event.corrects_event_id)[:8]} · "
                 if event.corrects_event_id else ""
             )
+            study_ref = (
+                f"{t('svc_study_ref')} {str(event.study_id)[:8]} · "
+                if self._all_studies else ""
+            )
             result.append({
                 "dt": event.occurred_at_utc.astimezone().strftime("%d.%m.%Y  %H:%M:%S"),
                 "type": (adverse_type_keys if event.category is EventCategory.ADVERSE_EVENT else type_keys).get(event.event_type, "marker_type_note"),
                 "desc": (
-                    f"{correction}{event.text} "
+                    f"{study_ref}{correction}{event.text} "
                     f"[{event.author} · {_format_position(event.position_seconds)}]"
                 ),
                 "event": event,
+                "can_correct": event.study_id == current_study_id,
                 "occurred_local": event.occurred_at_utc.astimezone().replace(tzinfo=None),
             })
         return result
@@ -769,8 +826,14 @@ class ServiceInfoScreen(QWidget):
 
     def retranslate(self):
         self._lbl_title.setText(t("screen_service"))
-        self._lbl_session.setText(t("svc_session_label"))
+        self._lbl_session.setText(t(
+            "svc_all_studies_label" if self._all_studies else "svc_session_label"
+        ))
+        self._combo_scope.setItemText(0, t("svc_scope_current"))
+        self._combo_scope.setItemText(1, t("svc_scope_all"))
         self._lbl_filter.setText(t("svc_filter_type"))
+        self._lbl_period.setText(t("svc_filter_period"))
+        self._lbl_date_to.setText(t("svc_filter_to"))
         self._btn_reset.setText(t("svc_btn_reset_filter"))
         self._btn_add.setText(t("svc_btn_add"))
         self._lbl_empty.setText(t("svc_no_events"))

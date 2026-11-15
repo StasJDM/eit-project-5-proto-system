@@ -181,13 +181,9 @@ class RawFrameReconstructor:
                     tuple(float(value) for value in row)
                     for row in absolute_conductivity
                 ),
-                # The numerical calculation is real, but its device assumptions
-                # are not confirmed; never expose it as clinically valid data.
-                quality=(
-                    DataQuality.DEGRADED
-                    if frame.quality is DataQuality.VALID
-                    else frame.quality
-                ),
+                # Temporary prototype policy: quality validation is disabled
+                # until its thresholds and hardware assumptions are approved.
+                quality=DataQuality.VALID,
                 simulated=frame.simulated,
             )
 

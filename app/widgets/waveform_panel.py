@@ -7,14 +7,15 @@ import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from ..waveform_draw import draw_filled_waveform
 from ..application.monitoring import DISPLAY_SAMPLES
 from ..styles import (
     C, WAVE_COLORS, AERATION_COLOR_T, AERATION_COLOR_R, AERATION_COLOR_L,
     AERATION_ROI_R, AERATION_ROI_L, SECTION_COLORS,
-    configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, FONT_SMALL, FONT_VALUE,
+    configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, FONT_SMALL,
+    FONT_MEDICAL_VALUE,
 )
 from ..i18n import t, i18n
 
@@ -81,6 +82,87 @@ class _WaveCanvas(QWidget):
             painter.drawLine(int(x), my, int(x), my + ph)
 
 
+def _format_monitoring_time(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+class _MonitoringMomentBar(QWidget):
+    """Horizontal time strip ending at the latest monitoring sample."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._start_seconds: float | None = None
+        self._current_seconds: float | None = None
+        self.setFixedHeight(38)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        i18n.language_changed.connect(self.update)
+
+    @property
+    def start_seconds(self) -> float | None:
+        return self._start_seconds
+
+    @property
+    def current_seconds(self) -> float | None:
+        return self._current_seconds
+
+    def set_time_values(self, values) -> None:
+        times = np.asarray(values, dtype=float).reshape(-1)
+        finite = times[np.isfinite(times)]
+        if finite.size:
+            self._start_seconds = float(finite[0])
+            self._current_seconds = float(finite[-1])
+        else:
+            self._start_seconds = None
+            self._current_seconds = None
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(C["bg_wave"]))
+
+        left = 10.0
+        right = max(left + 1.0, self.width() - 10.0)
+        track = QRectF(left, 5.0, right - left, 7.0)
+        painter.setPen(QPen(QColor(C["border_light"]), 1))
+        painter.setBrush(QBrush(QColor(C["bg_card"])))
+        painter.drawRoundedRect(track, 3.5, 3.5)
+
+        if self._current_seconds is not None:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(C["blue"])))
+            painter.drawRoundedRect(track, 3.5, 3.5)
+            painter.setPen(QPen(QColor(C["text"]), 2))
+            painter.setBrush(QBrush(QColor(C["blue_light"])))
+            painter.drawEllipse(QRectF(right - 5.0, 1.5, 10.0, 14.0))
+
+        painter.setPen(QPen(QColor(C["text_dim"]), 1))
+        start_text = (
+            _format_monitoring_time(self._start_seconds)
+            if self._start_seconds is not None else "—"
+        )
+        current_text = (
+            _format_monitoring_time(self._current_seconds)
+            if self._current_seconds is not None else "—"
+        )
+        text_top = 16.0
+        half = self.width() / 2.0
+        painter.drawText(
+            QRectF(left, text_top, half - left, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            start_text,
+        )
+        painter.setPen(QPen(QColor(C["text"]), 1))
+        painter.drawText(
+            QRectF(half, text_top, right - half, 18.0),
+            Qt.AlignRight | Qt.AlignVCenter,
+            f"{t('wave_monitoring_moment')}: {current_text}",
+        )
+
+
 # ── Single labelled waveform row ─────────────────────────────────────────────
 
 _LBL_ROI   = 22   # было 11 px
@@ -96,10 +178,10 @@ _MAIN_AGG_STRETCH      = 4    # средний график Σ R / Σ L (был�
 _MAIN_ROI_STRETCH      = 2    # малые ROI (было 1)
 
 _ROW_SIZES = {
-    "normal":  {"height": 68, "label_w": 96, "lbl_font": 22, "pct_w": 88, "pct_font": None, "trend": 22},
-    "large":   {"height": 76, "label_w": 96, "lbl_font": 20, "pct_w": 80, "pct_font": None, "trend": 22},
-    "medium":  {"height": 56, "label_w": 72, "lbl_font": 18, "pct_w": 72, "pct_font": 20, "trend": 20},
-    "compact": {"height": 44, "label_w": 68, "lbl_font": 15, "pct_w": 72, "pct_font": 18, "trend": 18},
+    "normal":  {"height": 68, "label_w": 96, "lbl_font": 22, "pct_w": 96, "pct_font": FONT_MEDICAL_VALUE},
+    "large":   {"height": 76, "label_w": 96, "lbl_font": 20, "pct_w": 96, "pct_font": FONT_MEDICAL_VALUE},
+    "medium":  {"height": 58, "label_w": 72, "lbl_font": 18, "pct_w": 84, "pct_font": 28},
+    "compact": {"height": 48, "label_w": 68, "lbl_font": 15, "pct_w": 78, "pct_font": 24},
 }
 
 
@@ -110,6 +192,7 @@ class _WaveRow(QWidget):
         color: str,
         show_rr: bool = False,
         expand: bool = False,
+        stack_metrics: bool = False,
         size: str = "normal",
         parent=None,
     ):
@@ -124,6 +207,11 @@ class _WaveRow(QWidget):
         lay.setSpacing(6)
 
         self._color = color
+        self.rr_box = None
+        self.metrics_stack = None
+        metric_scale = 2 if stack_metrics else 1
+        metric_width = spec["pct_w"] * metric_scale
+        metric_height = spec["height"] * metric_scale
 
         lbl = QLabel(label)
         lbl.setFixedWidth(spec["label_w"])
@@ -139,73 +227,97 @@ class _WaveRow(QWidget):
 
         if show_rr:
             rr_box = QWidget()
-            rr_box.setFixedWidth(100)
+            self.rr_box = rr_box
+            rr_box.setFixedWidth(metric_width if stack_metrics else 100)
+            rr_box.setFixedHeight(metric_height)
             rr_lay = QVBoxLayout(rr_box)
             rr_lay.setContentsMargins(2, 0, 2, 0)
             rr_lay.setSpacing(0)
+            rr_lay.setAlignment(Qt.AlignVCenter)
             self._lbl_rr_title = QLabel(t("wave_rr_short"))
             self._lbl_rr_title.setAlignment(Qt.AlignCenter)
             self._lbl_rr_title.setStyleSheet(
-                f"color: {C['text_dim']}; font-size: {_LBL_DIM}px; background: transparent;"
+                f"color: {C['text_dim']}; font-size: {_LBL_DIM * metric_scale}px; background: transparent;"
             )
             self.lbl_rr_val = QLabel("15")
             self.lbl_rr_val.setAlignment(Qt.AlignCenter)
             self.lbl_rr_val.setStyleSheet(
-                f"color: {C['text']}; font-size: 22px; font-weight: bold; background: transparent;"
+                f"color: {C['text']}; font-size: {spec['pct_font'] * metric_scale}px; font-weight: bold; background: transparent;"
             )
             self.lbl_rr_unit = QLabel(t("wave_rr_unit"))
             self.lbl_rr_unit.setAlignment(Qt.AlignCenter)
             self.lbl_rr_unit.setStyleSheet(
-                f"color: {C['text_dim']}; font-size: {_LBL_UNIT}px; background: transparent;"
+                f"color: {C['text_dim']}; font-size: {_LBL_UNIT * metric_scale}px; background: transparent;"
             )
             rr_lay.addWidget(self._lbl_rr_title)
             rr_lay.addWidget(self.lbl_rr_val)
             rr_lay.addWidget(self.lbl_rr_unit)
-            lay.addWidget(rr_box)
+            if not stack_metrics:
+                lay.addWidget(rr_box, 0, Qt.AlignVCenter)
         else:
             self._lbl_rr_title = None
             self.lbl_rr_val  = None
             self.lbl_rr_unit = None
 
-        pct_font = spec["pct_font"] or FONT_VALUE
+        pct_font = spec["pct_font"]
+        self._metric_value_font = pct_font * metric_scale
         pct_box = QWidget()
-        pct_box.setFixedWidth(spec["pct_w"])
+        self.pct_box = pct_box
+        pct_box.setFixedWidth(metric_width)
+        pct_box.setFixedHeight(metric_height)
         pct_lay = QVBoxLayout(pct_box)
         pct_lay.setContentsMargins(2, 0, 2, 0)
         pct_lay.setSpacing(0)
+        pct_lay.setAlignment(Qt.AlignVCenter)
         lbl_pct_title = QLabel("N,%")
         lbl_pct_title.setAlignment(Qt.AlignCenter)
         lbl_pct_title.setStyleSheet(
-            f"color:{C['text_dim']};font-size:{_LBL_DIM if size != 'compact' else 14}px;background:transparent;"
+            f"color:{C['text_dim']};font-size:{(_LBL_DIM if size != 'compact' else 14) * metric_scale}px;background:transparent;"
         )
         self.lbl_pct = QLabel("0.0")
         self.lbl_pct.setAlignment(Qt.AlignCenter)
         self.lbl_pct.setStyleSheet(
-            f"color:{C['text']};font-size:{pct_font}px;font-weight:bold;background:transparent;"
+            f"color:{C['text']};font-size:{pct_font * metric_scale}px;font-weight:bold;background:transparent;"
         )
         pct_lay.addWidget(lbl_pct_title)
         pct_lay.addWidget(self.lbl_pct)
-        lay.addWidget(pct_box)
+        if not stack_metrics:
+            lay.addWidget(pct_box, 0, Qt.AlignVCenter)
 
-        tr = spec["trend"]
         tr_box = QWidget()
-        tr_box.setFixedWidth(spec["pct_w"])
+        self.trend_box = tr_box
+        tr_box.setFixedWidth(metric_width)
+        tr_box.setFixedHeight(metric_height)
         tr_lay = QVBoxLayout(tr_box)
         tr_lay.setContentsMargins(2, 0, 2, 0)
         tr_lay.setSpacing(0)
+        tr_lay.setAlignment(Qt.AlignVCenter)
         self._lbl_trend_title = QLabel(t("wave_trend"))
         self._lbl_trend_title.setAlignment(Qt.AlignCenter)
-        dim = _LBL_DIM if size != "compact" else 14
+        dim = (_LBL_DIM if size != "compact" else 14) * metric_scale
         self._lbl_trend_title.setStyleSheet(
             f"color:{C['text_dim']};font-size:{dim}px;background:transparent;"
         )
         self.lbl_trend = QLabel("▲0.0")
-        self.lbl_trend.setFixedHeight(tr)
+        self.lbl_trend.setFixedHeight((pct_font + 6) * metric_scale)
         self.lbl_trend.setAlignment(Qt.AlignCenter)
         self._apply_trend_style(0.0)
         tr_lay.addWidget(self._lbl_trend_title)
         tr_lay.addWidget(self.lbl_trend)
-        lay.addWidget(tr_box)
+        if stack_metrics:
+            metrics_stack = QWidget()
+            self.metrics_stack = metrics_stack
+            metrics_stack.setFixedWidth(metric_width)
+            metrics_stack.setFixedHeight(metric_height * 3 + 16)
+            metrics_lay = QVBoxLayout(metrics_stack)
+            metrics_lay.setContentsMargins(0, 0, 0, 0)
+            metrics_lay.setSpacing(8)
+            metrics_lay.addWidget(self.rr_box)
+            metrics_lay.addWidget(pct_box)
+            metrics_lay.addWidget(tr_box)
+            lay.addWidget(metrics_stack, 0, Qt.AlignVCenter)
+        else:
+            lay.addWidget(tr_box, 0, Qt.AlignVCenter)
 
         i18n.language_changed.connect(self.retranslate)
 
@@ -215,20 +327,28 @@ class _WaveRow(QWidget):
     def update_pct(self, value: float | None):
         self.lbl_pct.setText("—" if value is None else f"{value:.1f}")
 
-    def update_trend(self, value: float):
+    def update_trend(self, value: float | None):
+        if value is None:
+            self.lbl_trend.setText("—")
+            self.lbl_trend.setStyleSheet(f"""
+                background-color:{C['bg_card']};color:{C['text_dim']};
+                border:1px solid {C['border']};border-radius:3px;
+                font-size:{self._metric_value_font}px;
+                font-weight:bold;
+            """)
+            return
         arrow = "▲" if value >= 0 else "▼"
         self.lbl_trend.setText(f"{arrow}{abs(value):.1f}")
         self._apply_trend_style(value)
 
     def _apply_trend_style(self, value: float):
-        tr = self.lbl_trend.height() or 20
         col = C["ok_hover"] if value >= 0 else C["alarm"]
         self.lbl_trend.setStyleSheet(f"""
             background-color:{C['bg_card']};
             color:{col};
             border:1px solid {C['border']};
             border-radius:3px;
-            font-size:{max(10, tr - 8)}px;
+            font-size:{self._metric_value_font}px;
             font-weight:bold;
         """)
 
@@ -445,13 +565,16 @@ class WaveformPanel(QWidget):
         show_regional: bool = True,
         show_event_button: bool = True,
         expand_global: bool = False,
+        show_velocity: bool = False,
         roi_count: int = 8,
+        bottom_left_widget: QWidget | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self._show_global = show_global
         self._show_regional = show_regional
         self._roi_count = roi_count
+        self._trends_visible = True
         self._regional_column_layouts: dict[str, QVBoxLayout] = {}
         # Главный экран: 9 каналов в ~740 px — компактные ROI + растяжение Σ LI.
         self._dense = show_global and show_regional and not expand_global
@@ -463,10 +586,12 @@ class WaveformPanel(QWidget):
 
         self._hdr_t = None
         self.row_global = None
+        self.row_velocity = None
         self.row_r_agg = None
         self.row_l_agg = None
         self._hdr_r = None
         self._hdr_l = None
+        self._regional_widget = None
         self.rows_r: list[_WaveRow] = []
         self.rows_l: list[_WaveRow] = []
 
@@ -478,12 +603,27 @@ class WaveformPanel(QWidget):
             self.row_global = _WaveRow(
                 "Σ LI", AERATION_COLOR_T, show_rr=True,
                 expand=expand_global or self._dense,
+                stack_metrics=expand_global,
                 size="large" if self._dense else "normal",
             )
             outer.addWidget(
                 self.row_global,
                 stretch=_MAIN_GLOBAL_STRETCH if self._dense else (1 if expand_global else 0),
             )
+            if show_velocity:
+                self.row_velocity = _WaveRow(
+                    "V", C["blue_light"], show_rr=True, expand=True, size="large"
+                )
+                # Keep the same three metric-column widths as Σ LI, but hide
+                # their contents. This aligns both waveform canvases exactly.
+                for placeholder in (
+                    self.row_velocity.rr_box,
+                    self.row_velocity.pct_box,
+                    self.row_velocity.trend_box,
+                ):
+                    for label in placeholder.findChildren(QLabel):
+                        label.setVisible(False)
+                outer.addWidget(self.row_velocity, stretch=1)
             if show_regional:
                 outer.addWidget(_hsep())
 
@@ -491,6 +631,7 @@ class WaveformPanel(QWidget):
             if self._dense:
                 # Две колонки: L (средний Σ + малые ROI) | R (средний Σ + малые ROI)
                 regional = QWidget()
+                self._regional_widget = regional
                 regional.setStyleSheet("background:transparent;")
                 reg_lay = QHBoxLayout(regional)
                 reg_lay.setContentsMargins(0, 0, 0, 0)
@@ -567,12 +708,27 @@ class WaveformPanel(QWidget):
         if not expand_global and not self._dense:
             outer.addStretch()
 
+        self.monitoring_moment_bar = _MonitoringMomentBar()
+        outer.addWidget(self.monitoring_moment_bar)
+
         self.btn_event = None
+        self._bottom_bar = None
+        self._bottom_layout = None
         if show_event_button:
             bottom = QWidget()
-            bottom.setFixedHeight(EVENT_MARKER_BTN_HEIGHT + 12)
+            bottom_height = EVENT_MARKER_BTN_HEIGHT + 12
+            if bottom_left_widget is not None:
+                # The large two-line counters polish to a 101 px size hint;
+                # reserve it up front so the 24/32 px typography is not clipped.
+                bottom_height = max(bottom_height, 112)
+            bottom.setFixedHeight(bottom_height)
             b_lay = QHBoxLayout(bottom)
             b_lay.setContentsMargins(8, 4, 8, 4)
+            b_lay.setSpacing(16)
+            self._bottom_bar = bottom
+            self._bottom_layout = b_lay
+            if bottom_left_widget is not None:
+                b_lay.addWidget(bottom_left_widget)
             b_lay.addStretch()
             self.btn_event = QPushButton(t("wave_event_marker"))
             configure_event_marker_btn(self.btn_event)
@@ -606,8 +762,21 @@ class WaveformPanel(QWidget):
                     size="compact",
                     expand=True,
                 )
+                row.trend_box.setVisible(self._trends_visible)
                 layout.addWidget(row, stretch=_MAIN_ROI_STRETCH)
                 target.append(row)
+
+    def set_trends_visible(self, visible: bool) -> None:
+        self._trends_visible = bool(visible)
+        for row in (
+            self.row_global,
+            self.row_r_agg,
+            self.row_l_agg,
+            *self.rows_r,
+            *self.rows_l,
+        ):
+            if row is not None:
+                row.trend_box.setVisible(self._trends_visible)
 
     def update_all(
         self,
@@ -619,6 +788,7 @@ class WaveformPanel(QWidget):
         trends: dict | None = None,
     ):
         rois = waves["rois"]
+        self.monitoring_moment_bar.set_time_values(waves.get("time", ()))
         bands = self._roi_count // 2
         r_agg = np.mean(rois[:bands], axis=0)
         l_agg = np.mean(rois[bands:], axis=0)
@@ -631,6 +801,8 @@ class WaveformPanel(QWidget):
             self.row_global.update_rr(rr)
             if trends:
                 self.row_global.update_trend(trends.get("global", 0.0))
+        if self.row_velocity is not None:
+            self.row_velocity.update_data(waves.get("velocity", np.asarray([])))
 
         if self.row_r_agg is not None:
             self.row_r_agg.update_data(r_agg)
@@ -667,6 +839,8 @@ class WaveformPanel(QWidget):
             self._hdr_l.retranslate()
         if self.row_global is not None:
             self.row_global.retranslate()
+        if self.row_velocity is not None:
+            self.row_velocity.retranslate()
         for row in self.rows_r + self.rows_l:
             row.retranslate()
         if self.btn_event is not None:
@@ -674,7 +848,10 @@ class WaveformPanel(QWidget):
 
     def set_event_markers(self, events, time_values):
         markers = _relative_markers(events, time_values)
-        rows = [self.row_global, self.row_r_agg, self.row_l_agg, *self.rows_r, *self.rows_l]
+        rows = [
+            self.row_global, self.row_velocity, self.row_r_agg, self.row_l_agg,
+            *self.rows_r, *self.rows_l,
+        ]
         for row in rows:
             if row is not None:
                 row.canvas.set_markers(markers)
@@ -682,15 +859,29 @@ class WaveformPanel(QWidget):
 
 def _relative_markers(events, time_values) -> tuple[tuple[float, str], ...]:
     times = np.asarray(time_values, dtype=float)
-    if times.size < 2:
+    if times.size == 0:
         return ()
     start, end = float(times[0]), float(times[-1])
+    boundary_tolerance = 0.5
+    if times.size == 1:
+        return tuple(
+            (1.0 if float(event.position_seconds) >= start else 0.0, event.event_type)
+            for event in events
+            if abs(float(event.position_seconds) - start) <= boundary_tolerance
+        )
     span = end - start
     if span <= 0:
         return ()
+    # The acquisition/filter pipeline and the session clock are independent.
+    # During the first frames a valid curve may therefore start a fraction of
+    # a second after a just-created operator marker. Keep that boundary marker
+    # visible instead of dropping it from the journal/timeline link.
     result = []
     for event in events:
         position = float(event.position_seconds)
-        if start <= position <= end + 0.5:
-            result.append((min(1.0, (position - start) / span), event.event_type))
+        if start - boundary_tolerance <= position <= end + boundary_tolerance:
+            result.append((
+                max(0.0, min(1.0, (position - start) / span)),
+                event.event_type,
+            ))
     return tuple(result)

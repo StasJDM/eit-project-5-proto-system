@@ -16,10 +16,16 @@ import numpy as np
 from ..domain import DataQuality, EITFrame, ROI_COUNT
 
 
+MAD_MEAN_PEAK_DETECTOR = "mad_mean"
 DERIVATIVE_PEAK_DETECTOR = "derivative"
 LEGACY_PEAK_DETECTOR = "legacy"
-PEAK_DETECTORS = (DERIVATIVE_PEAK_DETECTOR, LEGACY_PEAK_DETECTOR)
-ALGORITHM_VERSION = "eit-aeration-derivative-2.0.0"
+PEAK_DETECTORS = (
+    MAD_MEAN_PEAK_DETECTOR,
+    DERIVATIVE_PEAK_DETECTOR,
+    LEGACY_PEAK_DETECTOR,
+)
+ALGORITHM_VERSION = "eit-aeration-mad-mean-3.1.0"
+DERIVATIVE_ALGORITHM_VERSION = "eit-aeration-derivative-2.0.0"
 LEGACY_ALGORITHM_VERSION = "eit-aeration-mvp-1.0.0"
 
 
@@ -36,7 +42,7 @@ class AerationAlgorithmParameters:
     maximum_rr_bpm: float = 60.0
     artifact_mad_multiplier: float = 30.0
     artifact_history_samples: int = 25
-    peak_detection_method: str = DERIVATIVE_PEAK_DETECTOR
+    peak_detection_method: str = MAD_MEAN_PEAK_DETECTOR
     derivative_window_seconds: float = 0.5
     derivative_dead_zone_multiplier: float = 3.0
     derivative_persistence_seconds: float = 0.12
@@ -72,9 +78,11 @@ class AerationAlgorithmParameters:
             object.__setattr__(
                 self,
                 "version",
-                ALGORITHM_VERSION
-                if self.peak_detection_method == DERIVATIVE_PEAK_DETECTOR
-                else LEGACY_ALGORITHM_VERSION,
+                {
+                    MAD_MEAN_PEAK_DETECTOR: ALGORITHM_VERSION,
+                    DERIVATIVE_PEAK_DETECTOR: DERIVATIVE_ALGORITHM_VERSION,
+                    LEGACY_PEAK_DETECTOR: LEGACY_ALGORITHM_VERSION,
+                }[self.peak_detection_method],
             )
         elif not self.version.strip():
             raise ValueError("version must not be blank")
@@ -93,6 +101,7 @@ class AerationResult:
     algorithm_version: str = ALGORITHM_VERSION
     respiratory_rate_bpm: float | None = None
     tvi_au: float | None = None
+    minute_ventilation_au_per_min: float | None = None
     eeli_au: float | None = None
     eili_au: float | None = None
     right_percent: float | None = None
@@ -177,18 +186,10 @@ class AerationProcessor:
         return self._quality_reason
 
     def process(self, frame: EITFrame) -> ProcessedAerationSample | None:
-        if frame.quality is DataQuality.UNAVAILABLE:
-            self._last_quality = DataQuality.UNAVAILABLE
-            self._quality_reason = "source_data_unavailable"
-            return None
         global_value, roi_values = _derive_aeration_channels(
             frame, self.parameters.roi_count
         )
         vector = np.asarray((global_value, *roi_values), dtype=float)
-        if self._is_artifact(vector):
-            self._last_quality = DataQuality.DEGRADED
-            self._quality_reason = "motion_or_signal_artifact"
-            return None
 
         filtered: list[float] = []
         for history, value in zip(self._filter, vector):
@@ -200,24 +201,25 @@ class AerationProcessor:
         for target, value in zip(self._rois, filtered[1:]):
             target.append(value)
         self._recent_vectors.append(vector)
-        self._last_quality = frame.quality
-        self._quality_reason = (
-            "source_quality_degraded"
-            if frame.quality is DataQuality.DEGRADED else None
-        )
+        # Temporary prototype policy: do not reject or downgrade measurements.
+        self._last_quality = DataQuality.VALID
+        self._quality_reason = None
         return ProcessedAerationSample(
             sequence_number=frame.sequence_number,
             time_seconds=time_seconds,
             global_impedance=filtered[0],
             roi_impedance=tuple(filtered[1:]),
-            quality=frame.quality,
+            quality=DataQuality.VALID,
         )
 
     def waveforms(self, window_seconds: float) -> dict[str, object]:
         count = max(1, int(window_seconds * self.parameters.sample_rate_hz))
+        global_values = np.asarray(tuple(self._global), dtype=float)
+        velocity = calculate_breathing_velocity(global_values, self.parameters)
         return {
             "time": np.asarray(tuple(self._times)[-count:], dtype=float),
-            "global": np.asarray(tuple(self._global)[-count:], dtype=float),
+            "global": global_values[-count:],
+            "velocity": velocity[-count:],
             "rois": [
                 np.asarray(tuple(values)[-count:], dtype=float)
                 for values in self._rois
@@ -386,7 +388,19 @@ def calculate_aeration_metrics(
         rr = float(60.0 / np.median(selected))
 
     boundary_fallback = False
-    if parameters.peak_detection_method == DERIVATIVE_PEAK_DETECTOR:
+    if parameters.peak_detection_method == MAD_MEAN_PEAK_DETECTOR:
+        regions = _latest_mad_mean_breath(
+            detection_values, parameters, maxima, minima
+        )
+        if regions is not None:
+            expiration_region, inspiration_region = regions
+        else:
+            boundary_fallback = True
+            expiration_region = np.asarray([int(np.argmin(global_values))])
+            inspiration_region = np.asarray([int(np.argmax(global_values))])
+        expiration_index = int(round(float(np.mean(expiration_region))))
+        inspiration_index = int(round(float(np.mean(inspiration_region))))
+    elif parameters.peak_detection_method == DERIVATIVE_PEAK_DETECTOR:
         pair = _latest_derivative_breath(maxima, minima)
         if pair is not None:
             expiration_index, inspiration_index = pair
@@ -396,6 +410,8 @@ def calculate_aeration_metrics(
             boundary_fallback = True
             expiration_index = int(np.argmin(global_values))
             inspiration_index = int(np.argmax(global_values))
+        expiration_region = np.asarray([expiration_index])
+        inspiration_region = np.asarray([inspiration_index])
     # Legacy behaviour: use extrema inside the latest maximum-to-maximum span.
     elif maxima.size >= 2:
         start = int(maxima[-2])
@@ -411,12 +427,19 @@ def calculate_aeration_metrics(
     else:
         expiration_index = int(np.argmin(global_values))
         inspiration_index = int(np.argmax(global_values))
+    if parameters.peak_detection_method == LEGACY_PEAK_DETECTOR:
+        expiration_region = np.asarray([expiration_index])
+        inspiration_region = np.asarray([inspiration_index])
 
-    eeli = float(global_values[expiration_index])
-    eili = float(global_values[inspiration_index])
+    eeli = float(np.mean(global_values[expiration_region]))
+    eili = float(np.mean(global_values[inspiration_region]))
     if eili < eeli:
         eeli, eili = eili, eeli
         expiration_index, inspiration_index = inspiration_index, expiration_index
+        expiration_region, inspiration_region = (
+            inspiration_region,
+            expiration_region,
+        )
     tvi = eili - eeli
     noise = float(np.median(np.abs(np.diff(global_values) - np.median(np.diff(global_values)))))
     minimum_amplitude = max(1e-9, noise * 6.0)
@@ -428,7 +451,9 @@ def calculate_aeration_metrics(
         )
 
     roi_tvi = np.asarray([
-        max(0.0, float(values[inspiration_index] - values[expiration_index]))
+        max(0.0, float(
+            np.mean(values[inspiration_region]) - np.mean(values[expiration_region])
+        ))
         for values in roi_values
     ])
     roi_total = float(roi_tvi.sum())
@@ -455,22 +480,18 @@ def calculate_aeration_metrics(
     ))
     phase = float(np.clip((global_values[-1] - eeli) / max(tvi, 1e-12), 0.0, 1.0))
 
-    fallback = rr is None or boundary_fallback
-    quality = source_quality
-    reason = source_reason
-    if quality is DataQuality.UNAVAILABLE:
-        return _unavailable(
-            parameters, reason or "source_data_unavailable", time_values=times,
-            complete_cycle_count=cycle_count,
-            selected_cycle_count=selected_cycle_count,
-        )
-    if fallback and quality is DataQuality.VALID:
-        quality = DataQuality.DEGRADED
-        reason = "time_window_fallback"
+    # Temporary prototype policy: available calculated signal is always valid.
+    # Structural metric availability (for example RR before enough cycles) is
+    # still represented per metric without downgrading the whole signal.
+    quality = DataQuality.VALID
+    reason = None
     base_status = MetricAvailability(quality, reason)
     statuses = {name: base_status for name in _metric_names(roi_count)}
     if rr is None:
         statuses["rr"] = MetricAvailability(
+            DataQuality.UNAVAILABLE, "insufficient_complete_cycles"
+        )
+        statuses["mvi"] = MetricAvailability(
             DataQuality.UNAVAILABLE, "insufficient_complete_cycles"
         )
     if left <= 1e-12:
@@ -487,6 +508,7 @@ def calculate_aeration_metrics(
         algorithm_version=str(parameters.version),
         respiratory_rate_bpm=rr,
         tvi_au=tvi,
+        minute_ventilation_au_per_min=(tvi * rr if rr is not None else None),
         eeli_au=eeli,
         eili_au=eili,
         right_percent=right,
@@ -508,7 +530,7 @@ def calculate_aeration_metrics(
 
 def _metric_names(roi_count: int) -> tuple[str, ...]:
     return (
-        "rr", "tvi", "eeli", "eili", "r_pct", "l_pct", "rl_ratio", "vd_ratio",
+        "rr", "tvi", "mvi", "eeli", "eili", "r_pct", "l_pct", "rl_ratio", "vd_ratio",
         *(f"roi_{index}" for index in range(1, roi_count + 1)),
     )
 
@@ -577,6 +599,19 @@ def _breathing_detection_signal(
     return np.convolve(padded, np.ones(width) / width, mode="valid")
 
 
+def calculate_breathing_velocity(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> np.ndarray:
+    """Return the exact local-regression dZ/dt used by EELI/EILI detection."""
+    detection_values = _breathing_detection_signal(
+        np.asarray(values, dtype=float), parameters
+    )
+    slopes, _maximum_regions, _minimum_regions = _derivative_transition_regions(
+        detection_values, parameters
+    )
+    return slopes
+
+
 def _breath_turning_points(
     values: np.ndarray, parameters: AerationAlgorithmParameters
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -587,6 +622,8 @@ def _breath_turning_points(
     if parameters.peak_detection_method == LEGACY_PEAK_DETECTOR:
         maxima = _turning_points(values, maxima=True)
         minima = _turning_points(values, maxima=False)
+    elif parameters.peak_detection_method == MAD_MEAN_PEAK_DETECTOR:
+        maxima, minima = _mad_mean_turning_points(values, parameters)
     else:
         maxima, minima = _derivative_turning_points(values, parameters)
     return (
@@ -606,9 +643,56 @@ def _derivative_turning_points(
     not suppressed.  A positive-to-negative transition marks end inspiration;
     the opposite transition marks end expiration.
     """
-    if values.size < 3:
+    slopes, maximum_regions, minimum_regions = _derivative_transition_regions(
+        values, parameters
+    )
+    if slopes.size == 0:
         empty = np.asarray([], dtype=int)
         return empty, empty
+
+    def closest_to_zero(region: np.ndarray) -> int:
+        span = np.abs(slopes[region])
+        minimum = float(np.min(span))
+        closest = np.flatnonzero(
+            np.isclose(span, minimum, rtol=0.0, atol=1e-15)
+        )
+        return int(region[int(round(float(np.mean(closest))))])
+
+    return (
+        np.asarray(
+            [closest_to_zero(region) for region in maximum_regions], dtype=int
+        ),
+        np.asarray(
+            [closest_to_zero(region) for region in minimum_regions], dtype=int
+        ),
+    )
+
+
+def _mad_mean_turning_points(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> tuple[np.ndarray, np.ndarray]:
+    """Represent every MAD-defined transition zone by its mean sample time."""
+    _, maximum_regions, minimum_regions = _derivative_transition_regions(
+        values, parameters
+    )
+    return (
+        np.asarray(
+            [int(round(float(np.mean(region)))) for region in maximum_regions],
+            dtype=int,
+        ),
+        np.asarray(
+            [int(round(float(np.mean(region)))) for region in minimum_regions],
+            dtype=int,
+        ),
+    )
+
+
+def _derivative_transition_regions(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> tuple[np.ndarray, tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Return MAD-delimited positive/negative derivative transition zones."""
+    if values.size < 3:
+        return np.asarray([], dtype=float), (), ()
     width = max(3, round(
         parameters.derivative_window_seconds * parameters.sample_rate_hz
     ))
@@ -616,8 +700,7 @@ def _derivative_turning_points(
         width += 1
     width = min(width, values.size if values.size % 2 else values.size - 1)
     if width < 3:
-        empty = np.asarray([], dtype=int)
-        return empty, empty
+        return np.asarray([], dtype=float), (), ()
     half = width // 2
     x = np.arange(-half, half + 1, dtype=float) / parameters.sample_rate_hz
     kernel = x / float(np.dot(x, x))
@@ -641,8 +724,8 @@ def _derivative_turning_points(
         parameters.derivative_persistence_seconds * parameters.sample_rate_hz
     ))
 
-    maxima: list[int] = []
-    minima: list[int] = []
+    maxima: list[np.ndarray] = []
+    minima: list[np.ndarray] = []
     state = 0
     last_state_index = 0
     index = 0
@@ -659,15 +742,12 @@ def _derivative_turning_points(
             state = sign
         elif sign != state:
             span_start = min(last_state_index, index)
-            span = np.abs(slopes[span_start:index + 1])
-            minimum = float(np.min(span))
-            closest = np.flatnonzero(np.isclose(span, minimum, rtol=0.0, atol=1e-15))
-            candidate = span_start + int(round(float(np.mean(closest))))
-            (maxima if state > 0 else minima).append(candidate)
+            region = np.arange(span_start, index + 1, dtype=int)
+            (maxima if state > 0 else minima).append(region)
             state = sign
         last_state_index = stop - 1
         index = stop
-    return np.asarray(maxima, dtype=int), np.asarray(minima, dtype=int)
+    return slopes, tuple(maxima), tuple(minima)
 
 
 def _latest_derivative_breath(
@@ -682,6 +762,40 @@ def _latest_derivative_breath(
     if candidates.size == 0:
         return None
     return int(candidates[-1]), inspiration
+
+
+def _latest_mad_mean_breath(
+    values: np.ndarray,
+    parameters: AerationAlgorithmParameters,
+    maxima: np.ndarray,
+    minima: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Pair the latest confirmed MAD transition zones for expiration/inspiration."""
+    pair = _latest_derivative_breath(maxima, minima)
+    if pair is None:
+        return None
+    expiration, inspiration = pair
+    _, maximum_regions, minimum_regions = _derivative_transition_regions(
+        values, parameters
+    )
+
+    def region_by_mean(
+        regions: tuple[np.ndarray, ...], representative: int
+    ) -> np.ndarray | None:
+        return next(
+            (
+                region
+                for region in regions
+                if int(round(float(np.mean(region)))) == representative
+            ),
+            None,
+        )
+
+    expiration_region = region_by_mean(minimum_regions, expiration)
+    inspiration_region = region_by_mean(maximum_regions, inspiration)
+    if expiration_region is None or inspiration_region is None:
+        return None
+    return expiration_region, inspiration_region
 
 
 def _derive_aeration_channels(

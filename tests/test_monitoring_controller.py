@@ -95,6 +95,54 @@ class MonitoringControllerTest(unittest.TestCase):
             finally:
                 container.shutdown()
 
+    def test_raw_json_reconstruction_is_persisted_as_trend_data(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            container = ApplicationContainer.build(AppConfig(
+                data_mode=DataMode.FROMFILE,
+                fromfile_path=Path("examples/fromfile/test_1.json"),
+                fromfile_speed=100.0,
+                database_path=root / "db.sqlite3",
+                raw_data_dir=root / "frames",
+                export_dir=root / "exports",
+                log_path=root / "logs.jsonl",
+            ))
+            try:
+                patient = Patient(external_id="CTRL-RAW-TREND")
+                container.repositories.patients.save(patient)
+                lifecycle = container.study_lifecycle
+                lifecycle.select_patient(patient.id)
+                lifecycle.create_study()
+                lifecycle.prepare()
+                container.monitoring_controller.start()
+
+                deadline = time.monotonic() + 5.0
+                while (
+                    container.monitoring.acquisition_metrics.received_frames < 20
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
+                container.monitoring_controller.stop()
+
+                points = container.trend_service.read_position(
+                    lifecycle.current_study.id, 0.0, 60.0
+                ).points
+                self.assertTrue(points)
+                self.assertTrue(any(point.sample_count > 0 for point in points))
+                self.assertTrue(all(point.algorithm_version for point in points))
+                metric_codes = {
+                    name for point in points for name, _value in point.metric_values
+                }
+                self.assertTrue({
+                    "eeli_au", "eili_au", "tvi_au", "mli_au",
+                    "mvi_au_per_min", "rr_bpm", "right_left_ratio",
+                    "ventral_dorsal_ratio", "right_percent", "left_percent",
+                    "roi_1_tvi_au", "roi_8_tvi_au",
+                    "roi_1_percent", "roi_8_percent",
+                }.issubset(metric_codes))
+            finally:
+                container.shutdown()
+
     def test_double_start_is_rejected_and_shutdown_finalizes_every_component(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

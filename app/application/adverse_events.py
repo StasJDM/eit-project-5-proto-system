@@ -8,7 +8,7 @@ from uuid import UUID
 
 from .events import ApplicationEvent, EventBus, EventType
 from .ports import EventRepository
-from .studies import StudyLifecycleService
+from .studies import DEFAULT_OPERATOR_NAME, StudyLifecycleService
 from ..domain import Event, EventCategory, StudyStatus, utc_now
 
 
@@ -43,7 +43,22 @@ class AdverseEventService:
     @property
     def default_author(self) -> str:
         study = self._lifecycle.current_study
-        return (study.author if study is not None else None) or "local-operator"
+        author = study.author if study is not None else None
+        return DEFAULT_OPERATOR_NAME if not author or author == "local-operator" else author
+
+    @property
+    def current_study_id(self) -> UUID | None:
+        study = self._lifecycle.current_study
+        return None if study is None else study.id
+
+    @property
+    def default_occurred_at_utc(self) -> datetime:
+        session = self._lifecycle.current_session
+        return (
+            session.ended_at_utc
+            if session is not None and session.ended_at_utc is not None
+            else self._clock()
+        )
 
     def create(
         self,
@@ -55,7 +70,10 @@ class AdverseEventService:
     ) -> Event:
         study, session = self._active_context()
         occurred = occurred_at_utc or self._clock()
-        self._validate(event_type, description, author, occurred, session.started_at_utc)
+        self._validate(
+            event_type, description, author, occurred,
+            session.started_at_utc, session.ended_at_utc,
+        )
         now = self._clock()
         event = Event(
             study_id=study.id,
@@ -88,7 +106,10 @@ class AdverseEventService:
         if original is None or original.category is not EventCategory.ADVERSE_EVENT:
             raise AdverseEventError("event does not exist in the current study")
         resolved_type = event_type or original.event_type
-        self._validate(resolved_type, description, author, original.occurred_at_utc, None)
+        self._validate(
+            resolved_type, description, author, original.occurred_at_utc,
+            None, None,
+        )
         now = self._clock()
         correction = Event(
             study_id=study.id,
@@ -121,16 +142,26 @@ class AdverseEventService:
             return tuple(events)
         return tuple(e for e in events if e.category is EventCategory.ADVERSE_EVENT)
 
+    def list_all(self, *, include_markers: bool = True) -> tuple[Event, ...]:
+        events = tuple(self._repository.list_all())
+        if include_markers:
+            return events
+        return tuple(e for e in events if e.category is EventCategory.ADVERSE_EVENT)
+
     def _active_context(self):
         study = self._lifecycle.current_study
         session = self._lifecycle.current_session
         if study is None or session is None or study.status not in {
             StudyStatus.RUNNING, StudyStatus.PAUSED,
+            StudyStatus.COMPLETED, StudyStatus.FAILED,
         }:
-            raise AdverseEventError("an active monitoring session is required")
+            raise AdverseEventError("a monitoring session is required")
         return study, session
 
-    def _validate(self, event_type, description, author, occurred, session_start):
+    def _validate(
+        self, event_type, description, author, occurred,
+        session_start, session_end,
+    ):
         if event_type not in ADVERSE_EVENT_TYPES:
             raise AdverseEventError("unsupported adverse event type")
         if not description.strip():
@@ -143,6 +174,8 @@ class AdverseEventService:
             raise AdverseEventError("event date must not be in the future")
         if session_start is not None and occurred < session_start:
             raise AdverseEventError("event date must not precede session start")
+        if session_end is not None and occurred > session_end:
+            raise AdverseEventError("event date must not follow session end")
 
     def _publish(self, event: Event, action: str) -> None:
         self._event_bus.publish(ApplicationEvent(
