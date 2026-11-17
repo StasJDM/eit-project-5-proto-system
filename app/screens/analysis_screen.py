@@ -1066,7 +1066,10 @@ class PathologyTab(QWidget):
             }
             detected = t(keys[result.breathing_class])
             detail = f" · {result.confidence * 100:.0f}% · {result.algorithm_version}"
-            if result.reason == "experimental_model_not_clinically_validated":
+            if result.reason in {
+                "experimental_model_not_clinically_validated",
+                "experimental_spectral_classifier",
+            }:
                 detail += f" · {t('analysis_classifier_experimental')}"
             self._type_lbl.setToolTip(
                 t(f"analysis_reason_{result.reason}") if result.reason else ""
@@ -1417,6 +1420,11 @@ class AnalysisScreen(QWidget):
     def _apply_engineering_settings(self, settings) -> None:
         self._reg_tab.set_roi_count(settings.roi_count)
         self._display_window_sec = float(settings.graph_display_period_seconds)
+        active_profile = getattr(
+            self._monitoring, "section_profile", settings.section_profile
+        )
+        for widget in self.findChildren(LungVizWidget):
+            widget.set_section_profile(active_profile)
         self.set_peep_tab_visible(settings.is_element_visible("analysis.peep_tab"))
 
     def set_peep_tab_visible(self, visible: bool) -> None:
@@ -1434,6 +1442,10 @@ class AnalysisScreen(QWidget):
             )
 
     def _on_paint(self):
+        active_profile = getattr(self._monitoring, "section_profile", None)
+        if active_profile is not None:
+            for widget in self.findChildren(LungVizWidget):
+                widget.set_section_profile(active_profile)
         current = self._stack.currentWidget()
         window = (
             current.analysis_selection[0]

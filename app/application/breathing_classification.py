@@ -103,6 +103,17 @@ class BreathingClassificationService:
         self._allow_experimental = allow_experimental
         self._manual: ManualBreathingAssessment | None = None
 
+    def set_classifier(
+        self,
+        classifier: ValidatedBreathingClassifier | None,
+        *,
+        allow_experimental: bool | None = None,
+    ) -> None:
+        """Switch the active classifier without changing manual assessments."""
+        self._classifier = classifier
+        if allow_experimental is not None:
+            self._allow_experimental = bool(allow_experimental)
+
     @property
     def manual_assessment(self) -> ManualBreathingAssessment | None:
         return self._manual

@@ -97,7 +97,7 @@ class EventMarkerDialog(QDialog):
 
     def _validate(self) -> None:
         values = self.values()
-        if not values.description or not values.author:
+        if not values.author:
             self._error.setText(t("marker_required"))
             return
         self.accept()

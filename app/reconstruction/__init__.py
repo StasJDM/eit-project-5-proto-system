@@ -1,7 +1,9 @@
 """Finite-element reconstruction for raw EIT voltage measurements."""
 
 from .forward import CompleteElectrodeModel
-from .geometry import GeometryProfile, geometry_profile
+from .geometry import (
+    GeometryProfile, builtin_geometry_profiles, ellipse_profile, geometry_profile,
+)
 from .greit import GreitConfig, GreitReconstructor, GreitResult
 from .mesh import FiniteElementMesh, MeshDensity, generate_mesh
 from .processor import (
@@ -35,5 +37,7 @@ __all__ = [
     "ReconstructionDiagnostics",
     "ReconstructionError",
     "generate_mesh",
+    "builtin_geometry_profiles",
+    "ellipse_profile",
     "geometry_profile",
 ]

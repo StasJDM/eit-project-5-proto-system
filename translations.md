@@ -176,10 +176,10 @@
 | `pat_prev_study` | Предыдущее исследование ЭИТ | Previous EIT study | 上次EIT检查 | Nghiên cứu EIT trước |
 | `pat_preview` | Предварительный просмотр | Preview | 预览 | Xem trước |
 | `pat_playback` | Просмотр | Playback | 回放 | Phát lại |
-| `pat_import_eit_json` | Загрузить измерения ЭИТ из JSON | Load EIT measurements from JSON | 从 JSON 加载 EIT 测量 | Tải phép đo EIT từ JSON |
+| `pat_import_eit_json` | Загрузить измерения ЭИТ из файла | Load EIT measurements from file | 从文件加载 EIT 测量 | Tải phép đo EIT từ tệp |
 | `pat_import_eit_json_hint` | Исследовательская FEM/GREIT-реконструкция; порядок каналов и геометрия требуют подтверждения | Research FEM/GREIT reconstruction; channel order and geometry require confirmation | 研究性 FEM/GREIT 重建；通道顺序和几何形状需要确认 | Tái tạo FEM/GREIT nghiên cứu; thứ tự kênh và hình học cần được xác nhận |
-| `pat_import_eit_json_filter` | Измерения ЭИТ JSON (*.json) | EIT JSON measurements (*.json) | EIT JSON 测量 (*.json) | Phép đo EIT JSON (*.json) |
-| `pat_import_eit_json_error` | Файл не удалось проверить или реконструировать. Требуются последовательные кадры по 208 числовых каналов. | The file could not be validated or reconstructed. Sequential frames with 208 numeric channels are required. | 无法验证或重建文件。需要包含 208 个数值通道的连续帧。 | Không thể xác thực hoặc tái tạo tệp. Cần các khung liên tiếp với 208 kênh số. |
+| `pat_import_eit_json_filter` | Измерения ЭИТ (*.json *.csv *.xlsx) | EIT measurements (*.json *.csv *.xlsx) | EIT 测量 (*.json *.csv *.xlsx) | Phép đo EIT (*.json *.csv *.xlsx) |
+| `pat_import_eit_json_error` | Файл не удалось проверить или реконструировать. Требуются кадры по 208 числовых каналов; в CSV и Excel один кадр должен занимать одну строку. | The file could not be validated or reconstructed. Frames must have 208 numeric channels; CSV and Excel require one frame per row. | 无法验证或重建文件。每帧必须包含 208 个数值通道；CSV 和 Excel 每行一帧。 | Không thể xác thực hoặc tái tạo tệp. Mỗi khung phải có 208 kênh số; CSV và Excel yêu cầu một khung trên mỗi hàng. |
 | `pat_record_num` | Номер истории болезни | Medical record № | 病历号 | Số hồ sơ bệnh án |
 | **Воспроизведение исследования** | | | | |
 | `playback_read_only` | АРХИВ · только просмотр | ARCHIVE · read only | 存档 · 只读 | LƯU TRỮ · chỉ đọc |
@@ -340,7 +340,11 @@
 | `sys_element_main_mvi` | Отображать MVi | Show MVi | 显示 MVi | Hiển thị MVi |
 | `sys_engineering_graph_period` | Период отображения данных на графиках: | Data display period on charts: | 图表数据的显示时段： | Khoảng thời gian hiển thị dữ liệu trên biểu đồ: |
 | `sys_engineering_graph_period_value` | {seconds} с | {seconds} s | {seconds} 秒 | {seconds} giây |
+| `sys_engineering_peep_tab_visibility` | Показывать вкладку PEEP в разделе «Анализ» | Show the PEEP tab in Analysis | 在分析中显示 PEEP 选项卡 | Hiển thị thẻ PEEP trong phần Phân tích |
 | `sys_engineering_tab_trends` | Тренды | Trends | 趋势 | Xu hướng |
+| `sys_engineering_trend_chart_mode` | Представление трендов: | Trend presentation: | 趋势显示： | Hiển thị xu hướng: |
+| `sys_trend_chart_bars` | Столбцовые диаграммы | Bar charts | 柱状图 | Biểu đồ cột |
+| `sys_trend_chart_lines` | Графики | Line charts | 折线图 | Biểu đồ đường |
 | `sys_engineering_trend_point_mode` | Источник точек тренда: | Trend point source: | 趋势点来源： | Nguồn điểm xu hướng: |
 | `sys_trend_points_interval` | Интервалы 15 с (TB) | 15-second intervals (TB) | 15 秒间隔 (TB) | Khoảng 15 giây (TB) |
 | `sys_trend_points_breath_cycle` | Завершённые дыхательные циклы (BB) | Completed breath cycles (BB) | 完整呼吸周期 (BB) | Chu kỳ thở hoàn chỉnh (BB) |

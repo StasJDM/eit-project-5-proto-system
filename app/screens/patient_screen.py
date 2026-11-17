@@ -1082,7 +1082,7 @@ class PatientScreen(QWidget):
         if not path:
             return
         try:
-            self._playback_service.open_json(path)
+            self._playback_service.open_file(path)
         except (RuntimeError, OSError, ValueError):
             QMessageBox.warning(
                 self,

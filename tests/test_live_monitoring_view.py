@@ -173,7 +173,8 @@ class LiveMonitoringViewTest(unittest.TestCase):
             self.assertEqual(widget.display_mode, "absolute")
             self.assertTrue(widget.patient_left_is_screen_left)
             self.assertEqual(widget.delta_color_limit, fixed_limit)
-            self.assertEqual(widget.rendered_element_count, 64 * 64)
+            self.assertGreater(widget.rendered_element_count, 64 * 64 // 2)
+            self.assertLess(widget.rendered_element_count, 64 * 64)
             self.assertEqual(
                 widget.roi_grid_labels,
                 (

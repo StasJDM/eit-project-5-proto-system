@@ -20,12 +20,10 @@ class DataMode(str, Enum):
 
 
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
-_SIMULATION_SCENARIOS = frozenset({
-    "eupnea", "apnea", "tachypnea", "electrode_loss", "noise", "disconnect"
-})
-_DEFAULT_FROMFILE_PATH = Path(
-    "examples/fromfile/test_2.json"
+_SIMULATION_SCENARIOS = frozenset(
+    {"eupnea", "apnea", "tachypnea", "electrode_loss", "noise", "disconnect"}
 )
+_DEFAULT_FROMFILE_PATH = Path("examples/fromfile/test_3.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +37,7 @@ class AppConfig:
     simulation_respiratory_rate_bpm: float = 12.0
     simulation_duration_seconds: float = 300.0
     fromfile_path: Path = _DEFAULT_FROMFILE_PATH
-    fromfile_speed: float = 1.0
+    fromfile_speed: float = 0.5
     database_path: Path = Path("data/fromfile/eit.sqlite3")
     raw_data_dir: Path = Path("data/fromfile/frames")
     export_dir: Path = Path("exports")
@@ -79,11 +77,11 @@ class AppConfig:
                 raise ValueError
         except ValueError:
             simulation_seed = 0
-            diagnostics.append(
-                f"Invalid EIT_SIMULATION_SEED={raw_seed!r}; using 0"
-            )
+            diagnostics.append(f"Invalid EIT_SIMULATION_SEED={raw_seed!r}; using 0")
 
-        simulation_scenario = values.get("EIT_SIMULATION_SCENARIO", "eupnea").strip().lower()
+        simulation_scenario = (
+            values.get("EIT_SIMULATION_SCENARIO", "eupnea").strip().lower()
+        )
         if simulation_scenario not in _SIMULATION_SCENARIOS:
             diagnostics.append(
                 f"Invalid EIT_SIMULATION_SCENARIO={simulation_scenario!r}; using eupnea"
@@ -109,9 +107,7 @@ class AppConfig:
             _DEFAULT_FROMFILE_PATH,
             diagnostics,
         )
-        fromfile_speed = _positive_float(
-            values, "EIT_FROMFILE_SPEED", 1.0, diagnostics
-        )
+        fromfile_speed = _positive_float(values, "EIT_FROMFILE_SPEED", 0.5, diagnostics)
         if data_mode is DataMode.FROMFILE and not fromfile_path.is_file():
             diagnostics.append(
                 f"EIT_DATA_MODE=fromfile selected but EIT_FROMFILE_PATH={str(fromfile_path)!r} "
@@ -151,9 +147,7 @@ class AppConfig:
 
         raw_level = values.get("EIT_LOG_LEVEL", "INFO").strip().upper()
         if raw_level not in _LOG_LEVELS:
-            diagnostics.append(
-                f"Invalid EIT_LOG_LEVEL={raw_level!r}; using INFO"
-            )
+            diagnostics.append(f"Invalid EIT_LOG_LEVEL={raw_level!r}; using INFO")
             raw_level = "INFO"
 
         log_path = _path_value(

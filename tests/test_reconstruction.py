@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
+from app.application import EventBus, MonitoringService
 from app.data_sources import JSONMeasurementDataSource, RawMeasurementFrame
 from app.domain import AcquisitionSettings, DataQuality
 from app.reconstruction import (
@@ -13,6 +14,7 @@ from app.reconstruction import (
     RawFrameReconstructor,
     MeasurementProtocol,
     generate_mesh,
+    ellipse_profile,
     geometry_profile,
 )
 
@@ -70,6 +72,23 @@ class ReconstructionCoreTest(unittest.TestCase):
         reconstructor = RawFrameReconstructor(settings)
         self.assertIn("sternum_ccw", reconstructor.diagnostics.protocol_id)
         self.assertIn("adjacent_reversed", reconstructor.diagnostics.protocol_id)
+
+    def test_ellipse_profile_changes_mesh_and_reconstruction_diagnostics(self):
+        profile = ellipse_profile(
+            width_m=0.30,
+            height_m=0.21,
+            profile_id="test-ellipse-v1",
+            display_name="Test ellipse",
+        )
+        mesh = generate_mesh(profile, DEFAULT_MEASUREMENT_PROTOCOL, MeshDensity.LOW)
+        boundary = mesh.nodes[mesh.boundary_edges.ravel()]
+        span = np.ptp(boundary, axis=0)
+        self.assertAlmostEqual(float(span[0]), 0.30, places=6)
+        self.assertAlmostEqual(float(span[1]), 0.21, places=6)
+        reconstructor = RawFrameReconstructor(AcquisitionSettings(), geometry=profile)
+        self.assertEqual(
+            reconstructor.diagnostics.geometry_profile_id, "test-ellipse-v1"
+        )
 
     def test_streaming_raw_frames_produce_finite_non_mock_reconstruction(self):
         settings = AcquisitionSettings(
@@ -135,6 +154,47 @@ class ReconstructionCoreTest(unittest.TestCase):
 
 
 class RealJSONReconstructionIntegrationTest(unittest.TestCase):
+    def test_looped_default_recording_keeps_all_trend_metrics_available(self):
+        source = JSONMeasurementDataSource(
+            Path("examples/fromfile/test_3.json"),
+            simulated=True,
+            loop_playback=True,
+        )
+        monitoring = MonitoringService(
+            source,
+            EventBus(),
+            settings=source.suggested_settings,
+            roi_count=10,
+        )
+        samples = []
+        monitoring.subscribe_trend_samples(samples.append)
+        source.connect()
+        source.configure(source.suggested_settings)
+        source.start()
+        try:
+            # More than two 15-second trend intervals and several source loops.
+            for _index in range(750):
+                monitoring._accept_frame(source.read_frame())
+        finally:
+            source.stop()
+            source.disconnect()
+
+        values = dict(samples[-1].metric_values)
+        self.assertEqual(samples[-1].quality, DataQuality.VALID)
+        for code in (
+            "eeli_au",
+            "eili_au",
+            "tvi_au",
+            "mvi_au_per_min",
+            "rr_bpm",
+            "right_left_ratio",
+            "ventral_dorsal_ratio",
+            "right_percent",
+            "left_percent",
+        ):
+            with self.subTest(metric=code):
+                self.assertIsNotNone(values[code])
+
     def test_test_1_produces_positive_absolute_relative_conductivity(self):
         source = JSONMeasurementDataSource(Path("examples/fromfile/test_1.json"))
         reconstructor = RawFrameReconstructor(source.suggested_settings)

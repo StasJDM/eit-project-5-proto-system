@@ -1,17 +1,4 @@
-"""Trends screen — three-tab view of global and regional aeration trends.
-
-Tab 1: Global aeration trend (Σ LI waveform + bar chart).
-Tab 2: Regional aeration trend — ROI 1-4 (R) or ROI 5-8 (L), toggled.
-Tab 3: All trends — combined long-term view with lung icons.
-
-Layout per tab (tabs 1 & 2):
-  ┌─[wave panel, ~44%]──────┬─[bar charts, ~56%]──────────┐
-  │  stacked waveforms       │  ΔZ,% header                 │
-  │                          │  label | bar chart | % box   │
-  ├─[table + N,% boxes]──────┤  …                           │
-  └──────────────────────────┴──────────────────────────────┘
-  [Старт] [Масштаб] [Маркер событий] … [Выход]
-"""
+"""Three trend tabs with a synchronized numeric table and chart pane."""
 
 from uuid import UUID
 
@@ -19,6 +6,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QSizePolicy, QComboBox, QSlider, QScrollArea,
+    QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem,
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QBrush, QPainterPath
@@ -188,6 +176,17 @@ def _last_reduce(values: np.ndarray, factor: int) -> np.ndarray:
     ], dtype=float)
 
 
+def _upward_bar_geometry(
+    value: float, max_magnitude: float, baseline_y: float, plot_height: float
+) -> tuple[float, float]:
+    """Return top and height for an upward magnitude column."""
+    height = max(
+        1.0,
+        abs(float(value)) / max(float(max_magnitude), 1e-12) * float(plot_height),
+    )
+    return baseline_y - height, height
+
+
 # ── Separator helpers ─────────────────────────────────────────────────────────
 
 def _vsep(parent=None) -> QFrame:
@@ -323,7 +322,7 @@ class _BarRow(QWidget):
 
 
 class _MultiWave(QWidget):
-    """Stacked waveform display — all channels in one QPainter."""
+    """Stacked trend display — all channels in one QPainter."""
 
     def __init__(
         self,
@@ -344,6 +343,7 @@ class _MultiWave(QWidget):
         self._axis_end = float(DISPLAY_WINDOW_SEC)
         self._markers: tuple[float, ...] = ()
         self._bad_intervals: tuple[tuple[float, float], ...] = ()
+        self._chart_mode = "bars"
         self._plot_left_margin = 58
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -351,6 +351,12 @@ class _MultiWave(QWidget):
     def set_channels(self, channels: list[tuple[str, str]]) -> None:
         self._channels = list(channels)
         self._weights = [1] * len(channels)
+        self.update()
+
+    def set_chart_mode(self, mode: str) -> None:
+        if mode not in {"bars", "lines"}:
+            raise ValueError("unsupported trend chart mode")
+        self._chart_mode = mode
         self.update()
 
     def set_data(
@@ -467,7 +473,7 @@ class _MultiWave(QWidget):
 
             data = self._data[ci] if ci < len(self._data) else np.zeros(2)
             n = len(data)
-            if n >= 2:
+            if n >= 1:
                 finite = data[np.isfinite(data)]
                 if finite.size == 0:
                     ch_top += ch_h
@@ -486,19 +492,71 @@ class _MultiWave(QWidget):
                 times = self._times if self._times.size == n else np.linspace(
                     self._axis_start, self._axis_end, n
                 )
-                for i in range(n + 1):
-                    value = data[i] if i < n else np.nan
-                    if np.isfinite(value):
-                        x_fraction = (float(times[i]) - self._axis_start) / axis_span
-                        segment_x.append(ML + max(0.0, min(1.0, x_fraction)) * pw)
-                        segment_y.append(
-                            ch_top + pad + (1.0 - (value - lo) / (hi - lo)) * (ch_h - 2 * pad)
+                x_values = np.asarray([
+                    ML + max(
+                        0.0,
+                        min(
+                            1.0,
+                            (float(time) - self._axis_start) / axis_span,
+                        ),
+                    ) * pw
+                    for time in times
+                ])
+                if self._chart_mode == "bars":
+                    max_magnitude = max(
+                        1e-12, float(np.max(np.abs(finite)))
+                    )
+                    zero_y = ch_top + ch_h - pad
+                    fill = QColor(color)
+                    fill.setAlpha(190)
+                    for i, value in enumerate(data):
+                        if not np.isfinite(value):
+                            continue
+                        if n == 1:
+                            bar_width = max(2.0, pw * 0.04)
+                        else:
+                            left_gap = (
+                                x_values[i] - x_values[i - 1]
+                                if i > 0 else x_values[1] - x_values[0]
+                            )
+                            right_gap = (
+                                x_values[i + 1] - x_values[i]
+                                if i + 1 < n else x_values[-1] - x_values[-2]
+                            )
+                            bar_width = max(1.0, min(left_gap, right_gap) * 0.78)
+                        top, height = _upward_bar_geometry(
+                            float(value),
+                            max_magnitude,
+                            zero_y,
+                            ch_h - 2 * pad,
                         )
-                    elif len(segment_x) >= 2:
-                        draw_filled_waveform(p, segment_x, segment_y, QColor(color), baseline)
-                        segment_x, segment_y = [], []
-                    else:
-                        segment_x, segment_y = [], []
+                        left = max(float(ML), x_values[i] - bar_width / 2)
+                        right = min(float(ML + pw), x_values[i] + bar_width / 2)
+                        p.fillRect(
+                            int(left),
+                            int(top),
+                            max(1, int(right - left)),
+                            int(height),
+                            fill,
+                        )
+                    p.setPen(QPen(QColor(color), 1))
+                    p.drawLine(ML, int(zero_y), ML + pw, int(zero_y))
+                else:
+                    for i in range(n + 1):
+                        value = data[i] if i < n else np.nan
+                        if np.isfinite(value):
+                            segment_x.append(x_values[i])
+                            segment_y.append(
+                                ch_top + pad + (1.0 - (value - lo) / (hi - lo))
+                                * (ch_h - 2 * pad)
+                            )
+                        elif len(segment_x) >= 2:
+                            draw_filled_waveform(
+                                p, segment_x, segment_y, QColor(color), baseline
+                            )
+                            segment_x, segment_y = [], []
+                        else:
+                            segment_x, segment_y = [], []
 
             ch_top += ch_h
 
@@ -1107,15 +1165,101 @@ class _AllTrendsTab(QWidget):
                 )
 
 
+class _MetricValueTable(QTableWidget):
+    """Numeric view of the exact metric series rendered by the adjacent charts."""
+
+    def __init__(self, metrics, parent=None):
+        self.metrics = tuple(metrics)
+        super().__init__(len(self.metrics), 0, parent)
+        self._rendered_times = np.asarray([], dtype=float)
+        self._rendered_series: list[np.ndarray] = []
+        self._rendered_axis_range: tuple[float, float] | None = None
+        self.setObjectName("trend_values_table")
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setAlternatingRowColors(True)
+        self.setWordWrap(False)
+        self.setVerticalHeaderLabels([
+            f"{label}, {unit}" if unit else label
+            for label, _code, unit in self.metrics
+        ])
+        self.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.verticalHeader().setDefaultSectionSize(42)
+        self.verticalHeader().setMinimumWidth(116)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.horizontalHeader().setMinimumSectionSize(78)
+        self.setStyleSheet(f"""
+            QTableWidget {{
+                background:{C['bg_wave']};color:{C['text']};
+                alternate-background-color:{C['bg_card']};
+                border:1px solid {C['border']};gridline-color:{C['border']};
+                font-size:{FONT_LABEL}px;
+            }}
+            QHeaderView::section {{
+                background:{C['bg_panel']};color:{C['text_dim']};
+                border:0;border-right:1px solid {C['border']};
+                border-bottom:1px solid {C['border']};padding:6px;
+                font-size:{FONT_SMALL}px;font-weight:bold;
+            }}
+        """)
+
+    @staticmethod
+    def _format_value(value: float) -> str:
+        if not np.isfinite(value):
+            return "—"
+        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+
+    def set_series(
+        self,
+        data_list: list[np.ndarray],
+        time_values,
+        axis_range: tuple[float, float],
+    ) -> None:
+        arrays = [np.asarray(values, dtype=float) for values in data_list]
+        column_count = max((len(values) for values in arrays), default=0)
+        times = np.asarray(time_values, dtype=float)
+        if column_count and times.size != column_count:
+            times = np.linspace(axis_range[0], axis_range[1], column_count)
+        normalized_axis_range = tuple(map(float, axis_range))
+        if (
+            self._rendered_axis_range == normalized_axis_range
+            and np.array_equal(self._rendered_times, times, equal_nan=True)
+            and len(self._rendered_series) == len(arrays)
+            and all(
+                np.array_equal(previous, current, equal_nan=True)
+                for previous, current in zip(self._rendered_series, arrays)
+            )
+        ):
+            return
+        self._rendered_axis_range = normalized_axis_range
+        self._rendered_times = times.copy()
+        self._rendered_series = [values.copy() for values in arrays]
+
+        self.setColumnCount(column_count)
+        self.setHorizontalHeaderLabels([
+            _format_elapsed(float(value)) for value in times[:column_count]
+        ])
+        for row, values in enumerate(arrays):
+            for column in range(column_count):
+                value = values[column] if column < len(values) else np.nan
+                item = QTableWidgetItem(self._format_value(float(value)))
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item.setData(
+                    Qt.UserRole,
+                    None if not np.isfinite(value) else float(value),
+                )
+                self.setItem(row, column, item)
+
+
 class _MetricChartsTab(QWidget):
-    """All requested metric charts at once, vertically scrollable when needed."""
+    """Numeric table on the left and matching trend charts on the right."""
 
     def __init__(self, metrics, parent=None):
         super().__init__(parent)
         self.metrics = tuple(metrics)
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)
+        layout.setSpacing(4)
 
         channels = [
             (
@@ -1127,20 +1271,26 @@ class _MetricChartsTab(QWidget):
         self.wave = _MultiWave(channels)
         self.wave.setMinimumHeight(max(420, len(channels) * 92))
 
+        self.table = _MetricValueTable(self.metrics)
+        layout.addWidget(self.table, stretch=1)
+        layout.addWidget(_vsep())
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setWidget(self.wave)
-        layout.addWidget(self.scroll)
+        layout.addWidget(self.scroll, stretch=1)
 
     def refresh(self, waves: dict) -> None:
         metric_values = waves.get("metrics", {})
+        data_list = [
+            np.asarray(metric_values.get(code, ()), dtype=float)
+            for _label, code, _unit in self.metrics
+        ]
+        self.table.set_series(data_list, waves["time"], waves["axis_range"])
         self.wave.set_data(
-            [
-                np.asarray(metric_values.get(code, ()), dtype=float)
-                for _label, code, _unit in self.metrics
-            ],
+            data_list,
             waves["time"],
             waves["axis_range"],
         )
@@ -1289,6 +1439,7 @@ class TrendsScreen(QWidget):
         self._roi_count = 8
         self._trend_point_mode = "interval"
         self._trend_downsampling_mode = "manual_adult"
+        self._trend_chart_mode = "bars"
         self._unsubscribe_engineering = None
         if engineering_settings is not None:
             self._unsubscribe_engineering = engineering_settings.subscribe(
@@ -1310,9 +1461,12 @@ class TrendsScreen(QWidget):
         self._roi_count = settings.roi_count
         self._trend_point_mode = settings.trend_point_mode
         self._trend_downsampling_mode = settings.trend_downsampling_mode
+        self._trend_chart_mode = settings.trend_chart_mode
         if hasattr(self, "stack"):
             if roi_count_changed:
                 self._rebuild_roi_metric_tabs()
+            for wave in self._trend_waves():
+                wave.set_chart_mode(self._trend_chart_mode)
             self._refresh()
 
     def closeEvent(self, event) -> None:
@@ -1366,6 +1520,8 @@ class TrendsScreen(QWidget):
         self.stack.addWidget(self.tab_global)
         self.stack.addWidget(self.tab_regional)
         self.stack.addWidget(self.tab_all)
+        for wave in self._trend_waves():
+            wave.set_chart_mode(self._trend_chart_mode)
         outer.addWidget(self.stack, stretch=1)
 
         self.bottom = _BottomBar()
@@ -1388,6 +1544,15 @@ class TrendsScreen(QWidget):
         self.stack.insertWidget(1, self.tab_regional)
         self.stack.insertWidget(2, self.tab_all)
         self.stack.setCurrentIndex(current_index)
+        for wave in self._trend_waves():
+            wave.set_chart_mode(self._trend_chart_mode)
+
+    def _trend_waves(self) -> tuple[_MultiWave, ...]:
+        return (
+            self.tab_global.wave,
+            self.tab_regional.wave,
+            self.tab_all.wave,
+        )
 
     def _refresh(self):
         waves, events = self._stored_view()

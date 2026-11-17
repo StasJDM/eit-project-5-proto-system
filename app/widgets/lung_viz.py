@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QWidget
 from ..i18n import i18n, t
 from ..color_maps import DEFAULT_COLOR_MAP_ID, resolve_color_map
 from ..styles import C
+from ..reconstruction.geometry import GeometryProfile, geometry_profile
 
 
 class LungVizWidget(QWidget):
@@ -36,6 +37,7 @@ class LungVizWidget(QWidget):
         self._custom_color_low = "#29b6d1"
         self._custom_color_high = "#ffc857"
         self._rendered_element_count = 0
+        self._section_profile = geometry_profile("adult_ellipse")
         self.setToolTip(t("lung_reconstruction_tooltip"))
         i18n.language_changed.connect(self._on_language_changed)
 
@@ -101,6 +103,34 @@ class LungVizWidget(QWidget):
         self._custom_color_low = custom_low
         self._custom_color_high = custom_high
         self.update()
+
+    def set_section_profile(self, profile: GeometryProfile) -> None:
+        """Use the same contour for masking, landmarks, and electrode placement."""
+
+        if not isinstance(profile, GeometryProfile):
+            raise TypeError("profile must be a GeometryProfile")
+        if profile.cache_key() == self._section_profile.cache_key():
+            return
+        self._section_profile = profile
+        self.update()
+
+    def _profile_extent(self) -> float:
+        extent = 0.0
+        for index in range(128):
+            angle = 2.0 * math.pi * index / 128
+            radius = self._section_profile.radius_at(angle)
+            extent = max(
+                extent,
+                abs(radius * math.cos(angle)),
+                abs(radius * math.sin(angle)),
+            )
+        return extent
+
+    def _inside_profile(self, x: float, y: float) -> bool:
+        radius = math.hypot(x, y)
+        if radius <= 1e-12:
+            return True
+        return radius <= self._section_profile.radius_at(math.atan2(y, x)) + 1e-12
 
     def update_state(
         self,
@@ -225,6 +255,7 @@ class LungVizWidget(QWidget):
         cell_w = rect.width() / columns
         cell_h = rect.height() / rows
         grid_pen = QPen(QColor(255, 255, 255, 18), 0.45)
+        extent = self._profile_extent()
 
         # Pixel cells stay crisp; antialiasing is restored for contours.
         painter.setRenderHint(QPainter.Antialiasing, False)
@@ -233,6 +264,10 @@ class LungVizWidget(QWidget):
             y0 = rect.top() + row_index * cell_h
             y1 = rect.top() + (row_index + 1) * cell_h
             for column_index, value in enumerate(row):
+                physical_x = -extent + (column_index + 0.5) * (2.0 * extent / columns)
+                physical_y = extent - (row_index + 0.5) * (2.0 * extent / rows)
+                if not self._inside_profile(physical_x, physical_y):
+                    continue
                 # Reconstruction coordinates use the radiological convention.
                 # Mirror only the presentation so the patient's left side is
                 # also on the left side of the operator's screen.
@@ -246,10 +281,19 @@ class LungVizWidget(QWidget):
 
         # Landmarks are overlays; they never replace or aggregate map cells.
         thorax = QPainterPath()
-        thorax.addEllipse(rect.adjusted(
-            rect.width() * 0.04, rect.height() * 0.09,
-            -rect.width() * 0.04, -rect.height() * 0.09,
-        ))
+        contour_points: list[tuple[float, float]] = []
+        for index in range(128):
+            angle = 2.0 * math.pi * index / 128
+            radius = self._section_profile.radius_at(angle)
+            # Presentation mirrors the reconstruction x-axis.
+            sx = rect.center().x() - radius * math.cos(angle) / (2 * extent) * rect.width()
+            sy = rect.center().y() - radius * math.sin(angle) / (2 * extent) * rect.height()
+            contour_points.append((sx, sy))
+        if contour_points:
+            thorax.moveTo(*contour_points[0])
+            for point in contour_points[1:]:
+                thorax.lineTo(*point)
+            thorax.closeSubpath()
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(QColor(185, 211, 225, 145), 1.2))
         painter.drawPath(thorax)
@@ -261,13 +305,12 @@ class LungVizWidget(QWidget):
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#40c4ff"))
-        cx, cy = rect.center().x(), rect.center().y()
-        radius_x, radius_y = rect.width() * 0.48, rect.height() * 0.41
         dot = max(1.4, rect.width() * 0.012)
         for index in range(16):
             angle = 2 * math.pi * index / 16 - math.pi / 2
-            x = cx + radius_x * math.cos(angle)
-            y = cy + radius_y * math.sin(angle)
+            radius = self._section_profile.radius_at(angle)
+            x = rect.center().x() - radius * math.cos(angle) / (2 * extent) * rect.width()
+            y = rect.center().y() - radius * math.sin(angle) / (2 * extent) * rect.height()
             painter.drawEllipse(QRectF(x - dot, y - dot, dot * 2, dot * 2))
 
     def _draw_roi_grid(

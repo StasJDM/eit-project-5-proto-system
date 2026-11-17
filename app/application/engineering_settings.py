@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .events import ApplicationEvent, EventBus, EventType
 from .ports import SettingsRepository
+from ..reconstruction.geometry import GeometryProfile, geometry_profile
 
 
 ENGINEERING_SETTINGS_KEY = "engineering_settings"
@@ -17,6 +18,8 @@ MAX_ROI_COUNT = 20
 DEFAULT_ROI_COUNT = 8
 PEAK_DETECTION_METHODS = ("mad_mean", "derivative", "legacy")
 DEFAULT_PEAK_DETECTION_METHOD = "mad_mean"
+BREATHING_IDENTIFICATION_METHODS = ("model", "spectral")
+DEFAULT_BREATHING_IDENTIFICATION_METHOD = "model"
 MIN_GRAPH_DISPLAY_PERIOD_SECONDS = 10
 MAX_GRAPH_DISPLAY_PERIOD_SECONDS = 120
 DEFAULT_GRAPH_DISPLAY_PERIOD_SECONDS = 60
@@ -24,6 +27,8 @@ TREND_POINT_MODES = ("interval", "breath_cycle")
 DEFAULT_TREND_POINT_MODE = "interval"
 TREND_DOWNSAMPLING_MODES = ("none", "manual_adult", "manual_infant")
 DEFAULT_TREND_DOWNSAMPLING_MODE = "manual_adult"
+TREND_CHART_MODES = ("bars", "lines")
+DEFAULT_TREND_CHART_MODE = "bars"
 MIN_PEEP_SILENT_THRESHOLD_PERCENT = 1
 MAX_PEEP_SILENT_THRESHOLD_PERCENT = 30
 DEFAULT_PEEP_SILENT_THRESHOLD_PERCENT = 10
@@ -103,6 +108,12 @@ class EngineeringSettings:
     peep_silent_threshold_percent: int = DEFAULT_PEEP_SILENT_THRESHOLD_PERCENT
     peep_analysis_interval_seconds: int = DEFAULT_PEEP_ANALYSIS_INTERVAL_SECONDS
     peep_gravity_angle_degrees: int = 0
+    section_profile: GeometryProfile = field(
+        default_factory=lambda: geometry_profile("adult_ellipse")
+    )
+    custom_section_profiles: tuple[GeometryProfile, ...] = ()
+    trend_chart_mode: str = DEFAULT_TREND_CHART_MODE
+    breathing_identification_method: str = DEFAULT_BREATHING_IDENTIFICATION_METHOD
 
     def __post_init__(self) -> None:
         normalized = tuple(dict.fromkeys(self.work_modes))
@@ -121,10 +132,14 @@ class EngineeringSettings:
             raise ValueError("roi_count must be an even integer from 2 to 20")
         if self.peak_detection_method not in PEAK_DETECTION_METHODS:
             raise ValueError("unsupported peak_detection_method")
+        if self.breathing_identification_method not in BREATHING_IDENTIFICATION_METHODS:
+            raise ValueError("unsupported breathing_identification_method")
         if self.trend_point_mode not in TREND_POINT_MODES:
             raise ValueError("unsupported trend_point_mode")
         if self.trend_downsampling_mode not in TREND_DOWNSAMPLING_MODES:
             raise ValueError("unsupported trend_downsampling_mode")
+        if self.trend_chart_mode not in TREND_CHART_MODES:
+            raise ValueError("unsupported trend_chart_mode")
         if (
             isinstance(self.peep_silent_threshold_percent, bool)
             or not isinstance(self.peep_silent_threshold_percent, int)
@@ -147,6 +162,18 @@ class EngineeringSettings:
             or not -180 <= self.peep_gravity_angle_degrees <= 180
         ):
             raise ValueError("PEEP gravity angle must be an integer from -180 to 180")
+        if not isinstance(self.section_profile, GeometryProfile):
+            raise ValueError("section_profile must be a GeometryProfile")
+        if any(
+            not isinstance(profile, GeometryProfile)
+            for profile in self.custom_section_profiles
+        ):
+            raise ValueError("custom_section_profiles must contain GeometryProfile values")
+        profile_ids = tuple(
+            profile.profile_id for profile in self.custom_section_profiles
+        )
+        if len(profile_ids) != len(set(profile_ids)):
+            raise ValueError("custom section profile ids must be unique")
         if (
             isinstance(self.graph_display_period_seconds, bool)
             or not isinstance(self.graph_display_period_seconds, int)
@@ -188,6 +215,7 @@ class EngineeringSettings:
             "work_modes": list(self.work_modes),
             "roi_count": self.roi_count,
             "peak_detection_method": self.peak_detection_method,
+            "breathing_identification_method": self.breathing_identification_method,
             "visible_tabs": list(self.visible_tabs),
             "show_main_trends": self.show_main_trends,
             "show_main_tvi": self.show_main_tvi,
@@ -196,9 +224,14 @@ class EngineeringSettings:
             "graph_display_period_seconds": self.graph_display_period_seconds,
             "trend_point_mode": self.trend_point_mode,
             "trend_downsampling_mode": self.trend_downsampling_mode,
+            "trend_chart_mode": self.trend_chart_mode,
             "peep_silent_threshold_percent": self.peep_silent_threshold_percent,
             "peep_analysis_interval_seconds": self.peep_analysis_interval_seconds,
             "peep_gravity_angle_degrees": self.peep_gravity_angle_degrees,
+            "section_profile": self.section_profile.to_dict(),
+            "custom_section_profiles": [
+                profile.to_dict() for profile in self.custom_section_profiles
+            ],
         }
 
     @classmethod
@@ -239,6 +272,18 @@ class EngineeringSettings:
             visible_elements.append("main.velocity")
         if interface_elements_version < 4 and "analysis.peep_tab" not in visible_elements:
             visible_elements.append("analysis.peep_tab")
+        section_payload = payload.get("section_profile")
+        section_profile = (
+            geometry_profile("adult_ellipse")
+            if section_payload is None
+            else GeometryProfile.from_dict(section_payload)
+        )
+        custom_payloads = payload.get("custom_section_profiles", [])
+        if not isinstance(custom_payloads, list):
+            raise ValueError("stored custom_section_profiles must be a list")
+        custom_profiles = tuple(
+            GeometryProfile.from_dict(item) for item in custom_payloads
+        )
         return cls(
             tuple(modes),
             payload.get("roi_count", DEFAULT_ROI_COUNT),
@@ -265,6 +310,13 @@ class EngineeringSettings:
                 DEFAULT_PEEP_ANALYSIS_INTERVAL_SECONDS,
             ),
             payload.get("peep_gravity_angle_degrees", 0),
+            section_profile,
+            custom_profiles,
+            payload.get("trend_chart_mode", DEFAULT_TREND_CHART_MODE),
+            payload.get(
+                "breathing_identification_method",
+                DEFAULT_BREATHING_IDENTIFICATION_METHOD,
+            ),
         )
 
     def is_element_visible(self, element: str) -> bool:

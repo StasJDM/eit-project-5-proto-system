@@ -14,6 +14,7 @@ from app.application.monitoring import TrendSample
 from app.application.monitoring import _trend
 from app.screens.trends_screen import (
     _format_elapsed, _median_reduce, _relative_percent, _trend_median_factor,
+    _upward_bar_geometry,
 )
 from app.config import DataMode
 from app.domain import (
@@ -24,6 +25,13 @@ from app.storage import Database, RepositoryBundle
 
 
 class TrendStorageTest(unittest.TestCase):
+    def test_positive_and_negative_columns_both_grow_upward(self):
+        positive = _upward_bar_geometry(5.0, 10.0, 100.0, 80.0)
+        negative = _upward_bar_geometry(-5.0, 10.0, 100.0, 80.0)
+
+        self.assertEqual(positive, negative)
+        self.assertEqual(positive, (60.0, 40.0))
+
     def test_presentation_helpers_use_real_ranges_and_robust_level_change(self):
         values = _relative_percent(np.asarray([2.0, 3.0, np.nan, 4.0]))
         np.testing.assert_allclose(values[[0, 1, 3]], [0.0, 50.0, 100.0])

@@ -19,7 +19,7 @@ import numpy as np
 
 from ..domain import AcquisitionSettings, DataQuality, EITFrame
 from .forward import CompleteElectrodeModel
-from .geometry import geometry_profile
+from .geometry import GeometryProfile, geometry_profile
 from .greit import GreitConfig, GreitReconstructor
 from .mesh import MeshDensity, generate_mesh
 from .protocol import MeasurementProtocol
@@ -40,7 +40,7 @@ class ReconstructionDiagnostics:
     reference_frame_count: int
     active_channel_count: int
     protocol_id: str = ADJACENT_16_PROTOCOL_ID
-    geometry_profile_id: str = "adult-circle-v1"
+    geometry_profile_id: str = "adult-ellipse-v1"
     algorithm_version: str = RECONSTRUCTION_ALGORITHM_VERSION
     assumptions_confirmed: bool = False
     reason: str = "unconfirmed_protocol_and_geometry"
@@ -56,6 +56,7 @@ class RawFrameReconstructor:
         reference_seconds: float = 1.0,
         pixel_size: int = 64,
         mesh_density: MeshDensity = MeshDensity.LOW,
+        geometry: GeometryProfile | None = None,
     ) -> None:
         if reference_seconds <= 0:
             raise ValueError("reference_seconds must be positive")
@@ -74,7 +75,7 @@ class RawFrameReconstructor:
             electrode_order=settings.electrode_order,
             measurement_sequence=settings.measurement_sequence,
         )
-        profile = geometry_profile("adult")
+        profile = geometry or geometry_profile("adult_ellipse")
         mesh = generate_mesh(profile, self._protocol, mesh_density)
         model = CompleteElectrodeModel(
             mesh, profile, self._protocol
@@ -101,6 +102,7 @@ class RawFrameReconstructor:
             reference_frame_count=0,
             active_channel_count=208,
             protocol_id=self._protocol.protocol_id,
+            geometry_profile_id=profile.profile_id,
         )
 
     @property
@@ -120,6 +122,7 @@ class RawFrameReconstructor:
                 reference_frame_count=0,
                 active_channel_count=208,
                 protocol_id=self._protocol.protocol_id,
+                geometry_profile_id=self._model.profile.profile_id,
             )
 
     def prime_reference(
@@ -151,6 +154,7 @@ class RawFrameReconstructor:
                         reference_frame_count=len(self._reference_samples),
                         active_channel_count=208,
                         protocol_id=self._protocol.protocol_id,
+                        geometry_profile_id=self._model.profile.profile_id,
                         reason="collecting_reference",
                     )
                     return None
@@ -267,6 +271,7 @@ class RawFrameReconstructor:
             reference_frame_count=len(self._reference_samples),
             active_channel_count=active,
             protocol_id=self._protocol.protocol_id,
+            geometry_profile_id=self._model.profile.profile_id,
         )
         # Lock the absolute-map normalization to the deterministic reference,
         # so seeking or frame-to-frame changes cannot rescale the colours.

@@ -20,14 +20,16 @@ class AppConfigTest(unittest.TestCase):
         self.assertEqual(config.data_mode, DataMode.FROMFILE)
         self.assertEqual(
             config.fromfile_path,
-            Path("examples/fromfile/test_2.json"),
+            Path("examples/fromfile/test_3.json"),
         )
+        self.assertEqual(config.fromfile_speed, 0.5)
         self.assertEqual(config.database_path, Path("data/fromfile/eit.sqlite3"))
         self.assertEqual(config.raw_data_dir, Path("data/fromfile/frames"))
         self.assertEqual(config.log_path, Path("data/fromfile/logs/eit.jsonl"))
         source = create_data_source(config)
         self.assertIsInstance(source, JSONMeasurementDataSource)
-        self.assertEqual(len(source.recording.frames), 244)
+        self.assertEqual(source.playback_speed, 0.5)
+        self.assertEqual(len(source.recording.frames), 92)
         self.assertEqual(len(source.recording.frames[0].channel_values), 208)
         self.assertEqual(len(source.reconstruction_reference_frames), 25)
 

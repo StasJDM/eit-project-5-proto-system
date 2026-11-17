@@ -583,7 +583,7 @@ class Event:
         _validate_utc(self.created_at_utc, "created_at_utc")
         if not isinstance(self.category, EventCategory):
             raise TypeError("category must be EventCategory")
-        if not self.text.strip():
+        if self.category is not EventCategory.MARKER and not self.text.strip():
             raise ValueError("text must not be blank")
         if not self.event_type.strip():
             raise ValueError("event_type must not be blank")

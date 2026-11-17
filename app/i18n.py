@@ -90,10 +90,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "vi": "Phát lại",
     },
     "pat_import_eit_json": {
-        "ru": "Загрузить измерения ЭИТ из JSON",
-        "en": "Load EIT measurements from JSON",
-        "zh": "从 JSON 加载 EIT 测量",
-        "vi": "Tải phép đo EIT từ JSON",
+        "ru": "Загрузить измерения ЭИТ из файла",
+        "en": "Load EIT measurements from file",
+        "zh": "从文件加载 EIT 测量",
+        "vi": "Tải phép đo EIT từ tệp",
     },
     "pat_import_eit_json_hint": {
         "ru": "Исследовательская FEM/GREIT-реконструкция; порядок каналов и геометрия требуют подтверждения",
@@ -102,16 +102,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "vi": "Tái tạo FEM/GREIT nghiên cứu; thứ tự kênh và hình học cần được xác nhận",
     },
     "pat_import_eit_json_filter": {
-        "ru": "Измерения ЭИТ JSON (*.json)",
-        "en": "EIT JSON measurements (*.json)",
-        "zh": "EIT JSON 测量 (*.json)",
-        "vi": "Phép đo EIT JSON (*.json)",
+        "ru": "Измерения ЭИТ (*.json *.csv *.xlsx)",
+        "en": "EIT measurements (*.json *.csv *.xlsx)",
+        "zh": "EIT 测量 (*.json *.csv *.xlsx)",
+        "vi": "Phép đo EIT (*.json *.csv *.xlsx)",
     },
     "pat_import_eit_json_error": {
-        "ru": "Файл не удалось проверить или реконструировать. Требуются последовательные кадры по 208 числовых каналов.",
-        "en": "The file could not be validated or reconstructed. Sequential frames with 208 numeric channels are required.",
-        "zh": "无法验证或重建文件。需要包含 208 个数值通道的连续帧。",
-        "vi": "Không thể xác thực hoặc tái tạo tệp. Cần các khung liên tiếp với 208 kênh số.",
+        "ru": "Файл не удалось проверить или реконструировать. Требуются кадры по 208 числовых каналов; в CSV и Excel один кадр должен занимать одну строку.",
+        "en": "The file could not be validated or reconstructed. Frames must have 208 numeric channels; CSV and Excel require one frame per row.",
+        "zh": "无法验证或重建文件。每帧必须包含 208 个数值通道；CSV 和 Excel 每行一帧。",
+        "vi": "Không thể xác thực hoặc tái tạo tệp. Mỗi khung phải có 208 kênh số; CSV và Excel yêu cầu một khung trên mỗi hàng.",
     },
     "study_playback_unavailable": {
         "ru": "Запись исследования недоступна или повреждена.",
@@ -220,15 +220,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Автор", "en": "Author", "zh": "作者", "vi": "Tác giả",
     },
     "marker_description": {
-        "ru": "Описание", "en": "Description", "zh": "描述", "vi": "Mô tả",
+        "ru": "Описание (необязательно)", "en": "Description (optional)",
+        "zh": "描述（可选）", "vi": "Mô tả (không bắt buộc)",
     },
     "marker_description_hint": {
         "ru": "Что произошло во время мониторинга?", "en": "What happened during monitoring?",
         "zh": "监测期间发生了什么？", "vi": "Điều gì đã xảy ra trong quá trình giám sát?",
     },
     "marker_required": {
-        "ru": "Укажите описание и автора.", "en": "Enter a description and author.",
-        "zh": "请输入描述和作者。", "vi": "Nhập mô tả và tác giả.",
+        "ru": "Укажите автора.", "en": "Enter an author.",
+        "zh": "请输入作者。", "vi": "Nhập tác giả.",
     },
     "marker_type_cough": {
         "ru": "Кашель", "en": "Cough", "zh": "咳嗽", "vi": "Ho",
@@ -848,10 +849,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "vi": "PHÂN TÍCH",
     },
     "analysis_classifier_experimental": {
-        "ru": "экспериментальная модель",
-        "en": "experimental model",
-        "zh": "实验模型",
-        "vi": "mô hình thử nghiệm",
+        "ru": "экспериментальный алгоритм",
+        "en": "experimental algorithm",
+        "zh": "实验算法",
+        "vi": "thuật toán thử nghiệm",
     },
     "analysis_reason_experimental_model_not_clinically_validated": {
         "ru": "Модель breathclf 0.0.4 интегрирована для исследовательского использования и не имеет подтверждённого статуса клинической валидации.",
@@ -876,6 +877,30 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "The model could not process the current waveform.",
         "zh": "模型无法处理当前波形。",
         "vi": "Mô hình không thể xử lý dạng sóng hiện tại.",
+    },
+    "analysis_reason_experimental_spectral_classifier": {
+        "ru": "Спектрально-временной алгоритм предназначен для исследовательского использования и не прошёл клиническую валидацию.",
+        "en": "The spectral-temporal algorithm is for research use and has not been clinically validated.",
+        "zh": "频谱-时间算法仅供研究使用，尚未经过临床验证。",
+        "vi": "Thuật toán phổ-thời gian chỉ dùng cho nghiên cứu và chưa được xác nhận lâm sàng.",
+    },
+    "analysis_reason_spectral_insufficient_signal": {
+        "ru": "Для спектрального анализа требуется не менее 30 секунд непрерывного сигнала.",
+        "en": "Spectral analysis requires at least 30 seconds of continuous signal.",
+        "zh": "频谱分析需要至少 30 秒的连续信号。",
+        "vi": "Phân tích phổ cần ít nhất 30 giây tín hiệu liên tục.",
+    },
+    "analysis_reason_spectral_low_energy": {
+        "ru": "Энергия дыхательного сигнала недостаточна для классификации.",
+        "en": "Respiratory signal energy is insufficient for classification.",
+        "zh": "呼吸信号能量不足，无法分类。",
+        "vi": "Năng lượng tín hiệu hô hấp không đủ để phân loại.",
+    },
+    "analysis_reason_spectral_irregular_pattern": {
+        "ru": "Спектр не содержит достаточно устойчивого дыхательного компонента.",
+        "en": "The spectrum has no sufficiently stable respiratory component.",
+        "zh": "频谱中没有足够稳定的呼吸成分。",
+        "vi": "Phổ không có thành phần hô hấp đủ ổn định.",
     },
     "screen_trends": {
         "ru": "ТРЕНДЫ",
@@ -1116,6 +1141,67 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_engineering_tab_peep": {
         "ru": "PEEP", "en": "PEEP", "zh": "PEEP", "vi": "PEEP",
     },
+    "sys_engineering_tab_section": {
+        "ru": "Сечение", "en": "Cross-section", "zh": "截面", "vi": "Mặt cắt",
+    },
+    "sys_section_profile": {
+        "ru": "Профиль сечения", "en": "Cross-section profile",
+        "zh": "截面配置", "vi": "Cấu hình mặt cắt",
+    },
+    "sys_section_copy": {
+        "ru": "Создать копию", "en": "Create copy", "zh": "创建副本", "vi": "Tạo bản sao",
+    },
+    "sys_section_delete": {
+        "ru": "Удалить", "en": "Delete", "zh": "删除", "vi": "Xóa",
+    },
+    "sys_section_save": {
+        "ru": "Сохранить", "en": "Save", "zh": "保存", "vi": "Lưu",
+    },
+    "sys_section_reset": {
+        "ru": "Сбросить", "en": "Reset", "zh": "重置", "vi": "Đặt lại",
+    },
+    "sys_section_undo": {
+        "ru": "↶ Назад", "en": "↶ Undo", "zh": "↶ 撤销", "vi": "↶ Hoàn tác",
+    },
+    "sys_section_redo": {
+        "ru": "↷ Вперёд", "en": "↷ Redo", "zh": "↷ 重做", "vi": "↷ Làm lại",
+    },
+    "sys_section_apply_blocked_tooltip": {
+        "ru": "Сначала сохраните изменения модели сечения",
+        "en": "Save the cross-section model changes before applying",
+        "zh": "应用前请先保存截面模型更改",
+        "vi": "Hãy lưu thay đổi mô hình mặt cắt trước khi áp dụng",
+    },
+    "sys_section_name": {
+        "ru": "Название", "en": "Name", "zh": "名称", "vi": "Tên",
+    },
+    "sys_section_width": {
+        "ru": "Ширина", "en": "Width", "zh": "宽度", "vi": "Chiều rộng",
+    },
+    "sys_section_height": {
+        "ru": "Высота", "en": "Height", "zh": "高度", "vi": "Chiều cao",
+    },
+    "sys_section_rotation": {
+        "ru": "Поворот", "en": "Rotation", "zh": "旋转", "vi": "Xoay",
+    },
+    "sys_section_vertical_symmetry": {
+        "ru": "Вертикальная симметрия", "en": "Vertical symmetry",
+        "zh": "垂直对称", "vi": "Đối xứng dọc",
+    },
+    "sys_section_horizontal_symmetry": {
+        "ru": "Горизонтальная симметрия", "en": "Horizontal symmetry",
+        "zh": "水平对称", "vi": "Đối xứng ngang",
+    },
+    "sys_section_smooth": {
+        "ru": "Сгладить контур", "en": "Smooth contour",
+        "zh": "平滑轮廓", "vi": "Làm mượt đường viền",
+    },
+    "sys_section_hint": {
+        "ru": "Встроенные профили доступны только для просмотра. Создайте копию, чтобы изменить название, параметры эллипса или жёлтые точки. Изменения можно сохранить, сбросить и отменить. Расчётная геометрия активного исследования не меняется до его остановки.",
+        "en": "Built-in profiles are read-only. Create a copy to change its name, ellipse parameters, or yellow handles. Changes can be saved, reset, undone, and redone. A running study keeps its geometry until stopped.",
+        "zh": "内置配置仅供查看。请先创建副本，再调整椭圆或拖动黄色控制点。副本更改可保存、重置、撤销和重做。正在运行的研究会保留当前几何形状，直至停止。",
+        "vi": "Cấu hình tích hợp chỉ để xem. Hãy tạo bản sao rồi chỉnh elip hoặc kéo các điểm vàng. Có thể lưu, đặt lại, hoàn tác và làm lại thay đổi. Nghiên cứu đang chạy giữ nguyên hình học cho đến khi dừng.",
+    },
     "sys_engineering_navigation_visibility": {
         "ru": "Вкладки интерфейса", "en": "Interface tabs",
         "zh": "界面选项卡", "vi": "Các thẻ giao diện",
@@ -1234,6 +1320,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Источник точек тренда:", "en": "Trend point source:",
         "zh": "趋势点来源：", "vi": "Nguồn điểm xu hướng:",
     },
+    "sys_engineering_trend_chart_mode": {
+        "ru": "Представление трендов:", "en": "Trend presentation:",
+        "zh": "趋势显示：", "vi": "Hiển thị xu hướng:",
+    },
+    "sys_trend_chart_bars": {
+        "ru": "Столбцовые диаграммы", "en": "Bar charts",
+        "zh": "柱状图", "vi": "Biểu đồ cột",
+    },
+    "sys_trend_chart_lines": {
+        "ru": "Графики", "en": "Line charts",
+        "zh": "折线图", "vi": "Biểu đồ đường",
+    },
     "sys_trend_points_interval": {
         "ru": "Интервалы 15 с (TB)", "en": "15-second intervals (TB)",
         "zh": "15 秒间隔 (TB)", "vi": "Khoảng 15 giây (TB)",
@@ -1272,6 +1370,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Порог тихих пространств:", "en": "Silent Spaces threshold:",
         "zh": "静默空间阈值：", "vi": "Ngưỡng vùng im lặng:",
     },
+    "sys_engineering_peep_tab_visibility": {
+        "ru": "Показывать вкладку PEEP в разделе «Анализ»",
+        "en": "Show the PEEP tab in Analysis",
+        "zh": "在分析中显示 PEEP 选项卡",
+        "vi": "Hiển thị thẻ PEEP trong phần Phân tích",
+    },
     "sys_engineering_peep_interval": {
         "ru": "Интервал анализа PEEP:", "en": "PEEP analysis interval:",
         "zh": "PEEP 分析区间：", "vi": "Khoảng phân tích PEEP:",
@@ -1291,6 +1395,24 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Inspiration/expiration detector:",
         "zh": "吸气/呼气检测算法：",
         "vi": "Thuật toán phát hiện hít vào/thở ra:",
+    },
+    "sys_engineering_breathing_identification": {
+        "ru": "Метод идентификации типа дыхания:",
+        "en": "Breathing-pattern identification method:",
+        "zh": "呼吸类型识别方法：",
+        "vi": "Phương pháp nhận dạng kiểu thở:",
+    },
+    "sys_breathing_identification_model": {
+        "ru": "Модельный классификатор (breathclf)",
+        "en": "Model classifier (breathclf)",
+        "zh": "模型分类器 (breathclf)",
+        "vi": "Bộ phân loại mô hình (breathclf)",
+    },
+    "sys_breathing_identification_spectral": {
+        "ru": "Спектрально-временной (Welch/FFT)",
+        "en": "Spectral-temporal (Welch/FFT)",
+        "zh": "频谱-时间 (Welch/FFT)",
+        "vi": "Phổ-thời gian (Welch/FFT)",
     },
     "sys_peak_detector_mad_mean": {
         "ru": "MAD-зона и среднее (новый, по умолчанию)",

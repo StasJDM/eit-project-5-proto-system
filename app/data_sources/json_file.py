@@ -1,4 +1,4 @@
-"""Read-only playback source for external 208-channel EIT JSON recordings."""
+"""Read-only playback source for external 208-channel EIT recordings."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .json_contract import (
     RawMeasurementFrame,
     load_json_measurement_recording,
 )
+from .tabular_contract import load_tabular_measurement_recording
 
 
 class JSONPlaybackComplete(DataSourceError):
@@ -45,7 +46,12 @@ class JSONMeasurementDataSource(DataSource):
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self.path = Path(path).expanduser().resolve()
-        self.recording: JSONMeasurementRecording = load_json_measurement_recording(
+        loader = (
+            load_json_measurement_recording
+            if self.path.suffix.lower() == ".json"
+            else load_tabular_measurement_recording
+        )
+        self.recording: JSONMeasurementRecording = loader(
             self.path,
             fallback_frame_rate_hz=fallback_frame_rate_hz,
             simulated=simulated,
@@ -136,9 +142,9 @@ class JSONMeasurementDataSource(DataSource):
 
     def connect(self, device_id: str | None = None) -> None:
         if device_id not in (None, str(self.path)):
-            raise DataSourceError(f"unknown JSON measurement source: {device_id}")
+            raise DataSourceError(f"unknown measurement file source: {device_id}")
         if self._state is DataSourceState.RUNNING:
-            raise DataSourceError("cannot connect while JSON playback is running")
+            raise DataSourceError("cannot connect while file playback is running")
         if self._restart_on_connect and self._state is DataSourceState.DISCONNECTED:
             self._index = 0
             self._stream_started_at_utc = None
@@ -149,18 +155,18 @@ class JSONMeasurementDataSource(DataSource):
 
     def configure(self, settings: AcquisitionSettings) -> None:
         if self._state not in {DataSourceState.CONNECTED, DataSourceState.CONFIGURED}:
-            raise DataSourceError("connect the JSON recording before configuring it")
+            raise DataSourceError("connect the recording before configuring it")
         if settings.electrode_count != 16 or settings.belt_count != 1:
-            raise DataSourceError("JSON reconstruction supports one 16-electrode belt")
+            raise DataSourceError("file reconstruction supports one 16-electrode belt")
         if not math.isclose(
             settings.sample_rate_hz, self.frame_rate_hz, rel_tol=0.0, abs_tol=1e-9
         ):
-            raise DataSourceError("JSON frame rate does not match acquisition settings")
+            raise DataSourceError("recording frame rate does not match acquisition settings")
         self._state = DataSourceState.CONFIGURED
 
     def start(self) -> None:
         if self._state is not DataSourceState.CONFIGURED:
-            raise DataSourceError("configure the JSON recording before playback")
+            raise DataSourceError("configure the recording before playback")
         self._state = DataSourceState.RUNNING
         if self._loop_playback and self._stream_started_at_utc is None:
             self._stream_started_at_utc = self._clock()

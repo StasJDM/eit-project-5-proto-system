@@ -4,13 +4,15 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("EIT_DATA_MODE", "simulation")
 os.environ.setdefault("EIT_DATABASE_PATH", ":memory:")
 os.environ.setdefault("EIT_RAW_DATA_DIR", "/tmp/eit-test-frames")
 os.environ.setdefault("EIT_EXPORT_DIR", "/tmp/eit-test-exports")
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QDialogButtonBox, QLabel, QLineEdit, QMessageBox,
 )
@@ -142,6 +144,34 @@ class UiContractTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_trend_tab_shows_matching_numeric_table_and_charts(self):
+        window = MainWindow()
+        try:
+            tab = window._screens["trends"].tab_global
+            times = np.asarray([0.0, 15.0, 30.0])
+            values = {
+                code: np.asarray([index + 0.125, np.nan, index + 2.5])
+                for index, (_label, code, _unit) in enumerate(tab.metrics)
+            }
+            tab.refresh({
+                "metrics": values,
+                "time": times,
+                "axis_range": (0.0, 30.0),
+            })
+
+            self.assertEqual(tab.layout().stretch(0), tab.layout().stretch(2))
+            self.assertEqual(tab.table.rowCount(), len(tab.metrics))
+            self.assertEqual(tab.table.columnCount(), 3)
+            self.assertEqual(tab.table.horizontalHeaderItem(1).text(), "15с")
+            self.assertEqual(tab.table.item(0, 0).text(), "0.125")
+            self.assertEqual(tab.table.item(0, 1).text(), "—")
+            self.assertEqual(tab.table.item(0, 2).data(Qt.UserRole), 2.5)
+            np.testing.assert_allclose(
+                tab.wave._data[0], values[tab.metrics[0][1]], equal_nan=True
+            )
+        finally:
+            window.close()
+
     def test_engineering_element_visibility_applies_across_screens(self):
         window = MainWindow()
         try:
@@ -154,6 +184,7 @@ class UiContractTest(unittest.TestCase):
                 "patient.history",
                 "trends.period",
                 "analysis.lung_map",
+                "analysis.peep_tab",
                 "eit_settings.visualization",
                 "reports.preview",
                 "export.summary",
@@ -179,6 +210,7 @@ class UiContractTest(unittest.TestCase):
             self.assertTrue(window._screens["patient"]._box_history.isHidden())
             self.assertTrue(window._screens["trends"]._selector.isHidden())
             self.assertTrue(window._screens["analysis"]._reg_tab.lung_viz.isHidden())
+            self.assertTrue(window._screens["analysis"]._btn_peep.isHidden())
             self.assertTrue(window._screens["eit_settings"]._grp_color.isHidden())
             self.assertTrue(window._screens["reports"]._box_preview.isHidden())
             self.assertTrue(window._screens["export"]._privacy.isHidden())
@@ -197,6 +229,7 @@ class UiContractTest(unittest.TestCase):
                 graph_display_period_seconds=90,
                 trend_point_mode="breath_cycle",
                 trend_downsampling_mode="manual_infant",
+                trend_chart_mode="lines",
             ))
             self.app.processEvents()
 
@@ -209,6 +242,13 @@ class UiContractTest(unittest.TestCase):
                 window._screens["trends"]._trend_downsampling_mode,
                 "manual_infant",
             )
+            self.assertEqual(
+                window._screens["trends"]._trend_chart_mode, "lines"
+            )
+            self.assertTrue(all(
+                wave._chart_mode == "lines"
+                for wave in window._screens["trends"]._trend_waves()
+            ))
         finally:
             window.close()
 
@@ -525,6 +565,23 @@ class UiContractTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_patient_screen_imports_csv_as_read_only_playback(self):
+        path = Path("example/f1/stats.csv")
+        window = MainWindow()
+        try:
+            screen = window._screens["patient"]
+            with patch(
+                "app.screens.patient_screen.QFileDialog.getOpenFileName",
+                return_value=(str(path), ""),
+            ):
+                screen._btn_import_json.click()
+            self.assertTrue(window._container.playback_service.snapshot.active)
+            self.assertTrue(window._container.playback_service.snapshot.read_only)
+            self.assertEqual(window._container.monitoring.source.path, path.resolve())
+            self.assertEqual(len(window._container.monitoring.source.recording.frames), 91)
+        finally:
+            window.close()
+
     def test_debug_screen_calibrates_and_persists_current_study(self):
         window = MainWindow()
         try:
@@ -599,7 +656,7 @@ class UiContractTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_event_marker_button_saves_values_from_dialog(self):
+    def test_event_marker_button_saves_without_description(self):
         window = MainWindow()
         try:
             lifecycle = window._container.study_lifecycle
@@ -616,7 +673,6 @@ class UiContractTest(unittest.TestCase):
                     widget for widget in QApplication.topLevelWidgets()
                     if isinstance(widget, EventMarkerDialog)
                 )
-                dialog._description.setPlainText("Маркер через диалог")
                 buttons = dialog.findChild(QDialogButtonBox)
                 buttons.button(QDialogButtonBox.Save).click()
 
@@ -625,7 +681,7 @@ class UiContractTest(unittest.TestCase):
 
             markers = window._container.marker_service.list_for_current_study()
             self.assertEqual(len(markers), 1)
-            self.assertEqual(markers[0].text, "Маркер через диалог")
+            self.assertEqual(markers[0].text, "")
             self.assertEqual(markers[0].author, "ui-doctor")
         finally:
             window.close()

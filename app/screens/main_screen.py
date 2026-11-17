@@ -299,6 +299,9 @@ class MainScreen(QWidget):
     def _apply_engineering_settings(self, settings: EngineeringSettings) -> None:
         self._display_window_sec = float(settings.graph_display_period_seconds)
         self.waves.set_roi_count(settings.roi_count)
+        self.left.lung_viz.set_section_profile(
+            getattr(self._monitoring, "section_profile", settings.section_profile)
+        )
         visible = settings.is_element_visible
         self._quality_banner.setVisible(visible("main.quality"))
         self.left.lung_viz.setVisible(visible("main.lung_map"))
@@ -348,6 +351,9 @@ class MainScreen(QWidget):
     # ── Timer callbacks ───────────────────────────────────────────────────────
 
     def _on_paint(self, *_args):
+        active_profile = getattr(self._monitoring, "section_profile", None)
+        if active_profile is not None:
+            self.left.lung_viz.set_section_profile(active_profile)
         self._render(self._monitoring.read_view(self._display_window_sec))
 
     def _render(self, view: MonitoringView):

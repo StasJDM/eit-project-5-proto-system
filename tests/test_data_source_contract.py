@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 
 from app.data_sources import (
     DataSourceError,
@@ -10,9 +11,12 @@ from app.data_sources import (
     DataSourceTimingPolicy,
     FrameSequenceTracker,
     JSONMeasurementFormatError,
+    JSONMeasurementDataSource,
     SimulationDataSource,
+    TabularMeasurementFormatError,
     TimestampSource,
     load_json_measurement_recording,
+    load_tabular_measurement_recording,
     parse_json_measurement_recording,
 )
 
@@ -25,6 +29,50 @@ def frame(value=0.1):
 
 
 class DataSourceContractTest(unittest.TestCase):
+    def test_csv_example_loads_one_frame_per_row_and_ignores_zero_rows(self):
+        recording = load_tabular_measurement_recording(
+            Path("example/f1/stats.csv"),
+            recording_started_at_utc=START,
+        )
+
+        self.assertEqual(len(recording.frames), 91)
+        self.assertEqual(recording.frames[-1].sequence_number, 90)
+        self.assertTrue(all(
+            len(item.channel_values) == 208 for item in recording.frames
+        ))
+        self.assertFalse(any(
+            all(value == 0.0 for value in item.channel_values)
+            for item in recording.frames
+        ))
+
+        source = JSONMeasurementDataSource(Path("example/f1/stats.csv"))
+        self.assertEqual(len(source.recording.frames), 91)
+        self.assertEqual(source.suggested_settings.sample_rate_hz, 25.0)
+
+    def test_xlsx_loads_rows_and_ignores_a_completely_zero_frame(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "frames.xlsx"
+            _write_test_xlsx(path, ([1.0] * 208, [0.0] * 208, [2.0] * 208))
+
+            recording = load_tabular_measurement_recording(
+                path,
+                recording_started_at_utc=START,
+            )
+
+        self.assertEqual([item.sequence_number for item in recording.frames], [0, 1])
+        self.assertEqual(recording.frames[0].channel_values, (1.0,) * 208)
+        self.assertEqual(recording.frames[1].channel_values, (2.0,) * 208)
+        self.assertAlmostEqual(
+            (recording.frames[1].timestamp_utc - START).total_seconds(), 0.04
+        )
+
+    def test_tabular_rows_must_contain_exactly_208_numeric_values(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "bad.csv"
+            path.write_text(";".join(["1"] * 207), encoding="utf-8")
+            with self.assertRaisesRegex(TabularMeasurementFormatError, "207 values"):
+                load_tabular_measurement_recording(path)
+
     def test_all_bundled_fromfile_examples_satisfy_the_strict_contract(self):
         paths = sorted(Path("examples/fromfile").glob("*.json"))
         self.assertGreaterEqual(len(paths), 8)
@@ -131,6 +179,46 @@ class DataSourceContractTest(unittest.TestCase):
                 recording = load_json_measurement_recording(path, simulated=simulated)
                 self.assertEqual(len(recording.frames), expected_frames)
                 self.assertTrue(all(len(item.channel_values) == 208 for item in recording.frames))
+
+
+def _write_test_xlsx(path: Path, rows) -> None:
+    worksheet_rows = []
+    for row_number, values in enumerate(rows, 1):
+        cells = "".join(
+            f'<c r="{_excel_column(column)}{row_number}"><v>{value}</v></c>'
+            for column, value in enumerate(values, 1)
+        )
+        worksheet_rows.append(f'<row r="{row_number}">{cells}</row>')
+    worksheet = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(worksheet_rows)}</sheetData></worksheet>'
+    )
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="frames" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    relationships = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/></Relationships>'
+    )
+    with ZipFile(path, "w") as archive:
+        archive.writestr("xl/workbook.xml", workbook)
+        archive.writestr("xl/_rels/workbook.xml.rels", relationships)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+
+
+def _excel_column(number: int) -> str:
+    result = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
 
 
 if __name__ == "__main__":

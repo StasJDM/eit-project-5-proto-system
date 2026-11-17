@@ -9,6 +9,7 @@ from app.application import (
     BreathClfClassifier, BreathingClass, BreathingClassificationResult,
     BreathingClassificationService,
     LabeledBreathingSample,
+    SpectralBreathingClassifier,
 )
 from app.application.breathclf_adapter import _LoadedBundle
 
@@ -117,6 +118,74 @@ class BreathingClassificationTest(unittest.TestCase):
 
         self.assertIs(result.breathing_class, BreathingClass.UNDETERMINED)
         self.assertEqual(result.reason, "breathclf_model_unavailable")
+
+    def test_spectral_classifier_recognizes_stable_rate_classes(self):
+        classifier = SpectralBreathingClassifier()
+        for rate, expected in (
+            (8.0, BreathingClass.BRADYPNEA),
+            (15.0, BreathingClass.EUPNEA),
+            (40.0, BreathingClass.TACHYPNEA),
+        ):
+            with self.subTest(rate=rate):
+                fs = 25.0
+                time = np.arange(0.0, 60.0, 1.0 / fs)
+                values = np.sin(2.0 * np.pi * rate / 60.0 * time)
+                result = classifier.classify(values, fs, NOW, NOW + timedelta(seconds=60))
+                self.assertIs(result.breathing_class, expected)
+                self.assertGreater(result.confidence, 0.5)
+
+    def test_spectral_classifier_detects_periodic_modulation_and_apnea(self):
+        classifier = SpectralBreathingClassifier()
+        fs = 25.0
+        time = np.arange(0.0, 60.0, 1.0 / fs)
+        carrier = np.sin(2.0 * np.pi * 15.0 / 60.0 * time)
+
+        periodic = carrier * (0.55 + 0.45 * np.sin(2.0 * np.pi * time / 30.0))
+        periodic_result = classifier.classify(
+            periodic, fs, NOW, NOW + timedelta(seconds=60)
+        )
+        self.assertIs(periodic_result.breathing_class, BreathingClass.PERIODIC)
+
+        apnea = carrier.copy()
+        apnea[time >= 47.0] = 0.0
+        apnea_result = classifier.classify(apnea, fs, NOW, NOW + timedelta(seconds=60))
+        self.assertIs(apnea_result.breathing_class, BreathingClass.APNEA)
+
+    def test_spectral_classifier_rejects_short_or_flat_signal(self):
+        classifier = SpectralBreathingClassifier()
+        short = classifier.classify(
+            np.ones(100), 25.0, NOW, NOW + timedelta(seconds=4)
+        )
+        flat = classifier.classify(
+            np.ones(1500), 25.0, NOW, NOW + timedelta(seconds=60)
+        )
+        self.assertIs(short.breathing_class, BreathingClass.UNDETERMINED)
+        self.assertEqual(short.reason, "spectral_insufficient_signal")
+        self.assertIs(flat.breathing_class, BreathingClass.UNDETERMINED)
+        self.assertEqual(flat.reason, "spectral_low_energy")
+
+    def test_spectral_classifier_detects_gasping_and_irregular_breathing(self):
+        classifier = SpectralBreathingClassifier()
+        fs = 25.0
+        time = np.arange(0.0, 60.0, 1.0 / fs)
+
+        gasping = np.zeros_like(time)
+        for center in (5.0, 15.0, 25.0, 35.0, 45.0, 55.0):
+            gasping += np.exp(-0.5 * ((time - center) / 0.35) ** 2)
+        gasping_result = classifier.classify(
+            gasping, fs, NOW, NOW + timedelta(seconds=60)
+        )
+        self.assertIs(gasping_result.breathing_class, BreathingClass.GASPING)
+
+        segments = []
+        segment_time = np.arange(0.0, 10.0, 1.0 / fs)
+        for rate in (12.0, 24.0, 16.0, 28.0, 14.0, 22.0):
+            segments.append(np.sin(2.0 * np.pi * rate / 60.0 * segment_time))
+        irregular = np.concatenate(segments)
+        dyspnea_result = classifier.classify(
+            irregular, fs, NOW, NOW + timedelta(seconds=60)
+        )
+        self.assertIs(dyspnea_result.breathing_class, BreathingClass.DYSPNEA)
 
 
 if __name__ == "__main__":

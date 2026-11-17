@@ -10,8 +10,8 @@
 | `EIT_SIMULATION_SPEED` | `1.0` | Скорость демонстрационного воспроизведения |
 | `EIT_SIMULATION_RR_BPM` | `12.0` | Частота дыхания для обычного сценария, 5–30 дыханий/мин |
 | `EIT_SIMULATION_DURATION_SECONDS` | `300.0` | Длительность конечного сценария |
-| `EIT_FROMFILE_PATH` | `examples/fromfile/2x_circle_r0.15_20260608_211810.json` | JSON-файл с 208-канальными кадрами для режима `fromfile` |
-| `EIT_FROMFILE_SPEED` | `1.0` | Скорость воспроизведения файла; `2.0` — вдвое быстрее |
+| `EIT_FROMFILE_PATH` | `examples/fromfile/test_3.json` | Файл с 208-канальными кадрами для режима `fromfile` |
+| `EIT_FROMFILE_SPEED` | `0.5` | Скорость воспроизведения файла; `0.5` — вдвое медленнее, `2.0` — вдвое быстрее |
 | `EIT_DATABASE_PATH` | `data/<mode>/eit.sqlite3` | SQLite-файл метаданных |
 | `EIT_RAW_DATA_DIR` | `data/<mode>/frames` | Каталог сжатых NPZ-чанков кадров |
 | `EIT_EXPORT_DIR` | `exports` | Каталог экспорта |

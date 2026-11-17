@@ -17,6 +17,7 @@ from ..config import DataMode
 from ..data_sources import DataSource, DataSourceError, DataSourceState, RawMeasurementFrame
 from ..domain import AcquisitionSettings, DataQuality, EITFrame, ReconstructionMap
 from ..reconstruction.processor import RawFrameReconstructor, ReconstructionDiagnostics
+from ..reconstruction.geometry import GeometryProfile, geometry_profile
 from ..reconstruction.reconstruction import ReconstructionError
 from .acquisition import AcquisitionMetrics, AcquisitionPipeline, SourceFrame
 from .aeration import (
@@ -62,7 +63,7 @@ class MonitoringSnapshot:
     roi_trends: tuple[float | None, ...] = field(default_factory=lambda: (None,) * 8)
     quality: DataQuality = DataQuality.UNAVAILABLE
     quality_reason: str | None = "insufficient_data"
-    algorithm_version: str = "eit-aeration-mad-mean-3.1.0"
+    algorithm_version: str = "eit-aeration-mad-mean-3.2.0"
     metric_statuses: tuple[tuple[str, MetricAvailability], ...] = ()
     stream_state: str = "empty"
     analysis_window_seconds: float = 30.0
@@ -137,6 +138,8 @@ class MonitoringData(Protocol):
 
     @property
     def snapshot(self) -> MonitoringSnapshot: ...
+    @property
+    def current_position_seconds(self) -> float: ...
     def advance(self) -> SourceFrame: ...
     def get_waveforms(self, window_sec: float = DISPLAY_WINDOW_SEC) -> dict[str, object]: ...
     def read_view(self, window_sec: float = DISPLAY_WINDOW_SEC) -> MonitoringView: ...
@@ -160,6 +163,7 @@ class MonitoringService:
         peep_silent_threshold_percent: int = 10,
         peep_analysis_interval_seconds: int = 15,
         peep_gravity_angle_degrees: int = 0,
+        geometry: GeometryProfile | None = None,
     ) -> None:
         self._source = source
         self._event_bus = event_bus
@@ -167,6 +171,8 @@ class MonitoringService:
         self._buffer_seconds = buffer_seconds
         self._roi_count = roi_count
         self._peak_detection_method = peak_detection_method
+        self._geometry_profile = geometry or geometry_profile("adult_ellipse")
+        self._pending_geometry_profile: GeometryProfile | None = None
         capacity = max(1, int(buffer_seconds * self._settings.sample_rate_hz))
         self._aeration = AerationProcessor(
             AerationAlgorithmParameters(
@@ -183,7 +189,9 @@ class MonitoringService:
             analysis_interval_seconds=peep_analysis_interval_seconds,
             gravity_angle_degrees=peep_gravity_angle_degrees,
         )
-        self._raw_reconstructor = RawFrameReconstructor(self._settings)
+        self._raw_reconstructor = RawFrameReconstructor(
+            self._settings, geometry=self._geometry_profile
+        )
         self._lock = RLock()
         self._started = False
         self._latest_frame: SourceFrame | None = None
@@ -199,6 +207,13 @@ class MonitoringService:
     def source(self) -> DataSource:
         """Exposed for lifecycle diagnostics, never needed by screens."""
         return self._source
+
+    @property
+    def current_position_seconds(self) -> float:
+        """Latest X coordinate on the aeration waveform time axis."""
+        with self._lock:
+            times = self._aeration.waveforms(1.0)["time"]
+            return 0.0 if len(times) == 0 else max(0.0, float(times[-1]))
 
     @property
     def mode(self) -> MonitoringMode:
@@ -236,6 +251,12 @@ class MonitoringService:
     @property
     def reconstruction_diagnostics(self) -> ReconstructionDiagnostics:
         return self._raw_reconstructor.diagnostics
+
+    @property
+    def section_profile(self) -> GeometryProfile:
+        """Geometry currently used by reconstruction (not a deferred selection)."""
+
+        return self._geometry_profile
 
     def subscribe_frames(
         self, handler: Callable[[SourceFrame], None]
@@ -338,7 +359,9 @@ class MonitoringService:
                 ),
                 capacity=capacity,
             )
-            self._raw_reconstructor = RawFrameReconstructor(settings)
+            self._raw_reconstructor = RawFrameReconstructor(
+                settings, geometry=self._geometry_profile
+            )
             self._prime_reconstruction_reference()
         self._publish_state()
         if was_running:
@@ -352,6 +375,26 @@ class MonitoringService:
             roi_count=roi_count,
             peak_detection_method=self._peak_detection_method,
         )
+
+    def set_section_profile(self, profile: GeometryProfile) -> bool:
+        """Select reconstruction geometry; defer a running-session change safely."""
+
+        if not isinstance(profile, GeometryProfile):
+            raise TypeError("profile must be a GeometryProfile")
+        with self._lock:
+            if profile.cache_key() == self._geometry_profile.cache_key():
+                return True
+            if self.is_running:
+                self._pending_geometry_profile = profile
+                return False
+            self._geometry_profile = profile
+            self._pending_geometry_profile = None
+            self._raw_reconstructor = RawFrameReconstructor(
+                self._settings, geometry=profile
+            )
+            self._prime_reconstruction_reference()
+            self._latest_reconstructed_frame = None
+        return True
 
     def set_aeration_configuration(
         self, *, roi_count: int, peak_detection_method: str
@@ -411,7 +454,9 @@ class MonitoringService:
                 ),
                 capacity=capacity,
             )
-            self._raw_reconstructor = RawFrameReconstructor(settings)
+            self._raw_reconstructor = RawFrameReconstructor(
+                settings, geometry=self._geometry_profile
+            )
             self._prime_reconstruction_reference()
             self._latest_frame = None
             self._latest_reconstructed_frame = None
@@ -701,6 +746,12 @@ class MonitoringService:
     def _reset_buffers(self) -> None:
         capacity = max(1, int(self._buffer_seconds * self._settings.sample_rate_hz))
         with self._lock:
+            if self._pending_geometry_profile is not None and not self.is_running:
+                self._geometry_profile = self._pending_geometry_profile
+                self._pending_geometry_profile = None
+                self._raw_reconstructor = RawFrameReconstructor(
+                    self._settings, geometry=self._geometry_profile
+                )
             self._aeration.reset()
             self._peep.reset()
             self._raw_reconstructor.reset()

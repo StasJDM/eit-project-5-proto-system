@@ -9,7 +9,7 @@ from .application import (
     EITSettingsService, EngineeringSettingsService, ElectrodeQualityService, EventMarkerService, MonitoringController,
     MonitoringService, PatientService, SessionClockService,
     StudyLifecycleService, StudyPlaybackService, StudyRecordingService,
-    TrendService, StudyExportService, MedicalReportService,
+    TrendService, StudyExportService, MedicalReportService, SpectralBreathingClassifier,
 )
 from .config import AppConfig
 from .data_sources import DataSource, create_data_source
@@ -85,8 +85,10 @@ class ApplicationContainer:
             peep_gravity_angle_degrees=(
                 engineering_settings.current.peep_gravity_angle_degrees
             ),
+            geometry=engineering_settings.current.section_profile,
         )
         def apply_engineering_settings(settings):
+            monitoring.set_section_profile(settings.section_profile)
             monitoring.set_aeration_configuration(
                 roi_count=settings.roi_count,
                 peak_detection_method=settings.peak_detection_method,
@@ -143,7 +145,10 @@ class ApplicationContainer:
             lifecycle, monitoring, session_clock, event_bus
         )
         marker_service = EventMarkerService(
-            repositories.events, lifecycle, event_bus
+            repositories.events,
+            lifecycle,
+            event_bus,
+            position_provider=lambda: monitoring.current_position_seconds,
         )
         trend_service = TrendService(
             repositories.trends, monitoring, lifecycle, event_bus
@@ -151,9 +156,21 @@ class ApplicationContainer:
         adverse_event_service = AdverseEventService(
             repositories.events, lifecycle, event_bus
         )
+        breathing_classifiers = {
+            "model": BreathClfClassifier(resolved.breath_model_path),
+            "spectral": SpectralBreathingClassifier(),
+        }
         breathing_classification = BreathingClassificationService(
-            BreathClfClassifier(resolved.breath_model_path),
+            breathing_classifiers[
+                engineering_settings.current.breathing_identification_method
+            ],
             allow_experimental=True,
+        )
+        engineering_settings.subscribe(
+            lambda settings: breathing_classification.set_classifier(
+                breathing_classifiers[settings.breathing_identification_method],
+                allow_experimental=True,
+            )
         )
         export_service = StudyExportService(repositories, recording_store)
         report_service = MedicalReportService(repositories, resolved.export_dir / "reports")

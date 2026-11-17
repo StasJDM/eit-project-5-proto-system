@@ -88,7 +88,11 @@ class StudyPlaybackService:
         self._publish()
 
     def open_json(self, path: str | Path, *, speed: float = 1.0) -> None:
-        """Open an external raw JSON recording through FEM/GREIT reconstruction."""
+        """Backward-compatible alias for :meth:`open_file`."""
+        self.open_file(path, speed=speed)
+
+    def open_file(self, path: str | Path, *, speed: float = 1.0) -> None:
+        """Open an external JSON, CSV or XLSX recording for reconstruction."""
         source = JSONMeasurementDataSource(path, playback_speed=speed)
         self._monitoring.replace_source(
             source,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+import math
 from uuid import UUID
 
 from ..domain import Event, EventCategory, StudyStatus, utc_now
@@ -35,18 +36,20 @@ class EventMarkerService:
         event_bus: EventBus,
         *,
         clock: Callable[[], datetime] = utc_now,
+        position_provider: Callable[[], float] | None = None,
     ) -> None:
         self._repository = repository
         self._lifecycle = lifecycle
         self._event_bus = event_bus
         self._clock = clock
+        self._position_provider = position_provider
 
     @property
     def current_position_seconds(self) -> float:
         session = self._lifecycle.current_session
         if session is None or session.started_at_utc is None:
             return 0.0
-        return session.duration_seconds(self._clock())
+        return self._position_seconds(self._clock(), session)
 
     @property
     def default_author(self) -> str:
@@ -75,7 +78,7 @@ class EventMarkerService:
             text=description.strip(),
             event_type=event_type,
             author=author.strip(),
-            position_seconds=session.duration_seconds(now),
+            position_seconds=self._position_seconds(now, session),
             simulated=study.simulated,
             created_at_utc=now,
         )
@@ -138,6 +141,13 @@ class EventMarkerService:
             if start_seconds <= item.position_seconds <= end_seconds
         )
 
+    def _position_seconds(self, now: datetime, session) -> float:
+        if self._position_provider is not None:
+            position = float(self._position_provider())
+            if math.isfinite(position) and position >= 0.0:
+                return position
+        return session.duration_seconds(now)
+
     def _active_context(self):
         study = self._lifecycle.current_study
         session = self._lifecycle.current_session
@@ -153,8 +163,6 @@ class EventMarkerService:
     def _validate_input(event_type: str, description: str, author: str) -> None:
         if event_type not in MARKER_TYPES:
             raise EventMarkerError("unsupported marker type")
-        if not description.strip():
-            raise EventMarkerError("marker description must not be blank")
         if not author.strip():
             raise EventMarkerError("marker author must not be blank")
 

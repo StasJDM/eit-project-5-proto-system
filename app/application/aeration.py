@@ -24,7 +24,7 @@ PEAK_DETECTORS = (
     DERIVATIVE_PEAK_DETECTOR,
     LEGACY_PEAK_DETECTOR,
 )
-ALGORITHM_VERSION = "eit-aeration-mad-mean-3.1.0"
+ALGORITHM_VERSION = "eit-aeration-mad-mean-3.2.0"
 DERIVATIVE_ALGORITHM_VERSION = "eit-aeration-derivative-2.0.0"
 LEGACY_ALGORITHM_VERSION = "eit-aeration-mvp-1.0.0"
 
@@ -441,7 +441,10 @@ def calculate_aeration_metrics(
             expiration_region,
         )
     tvi = eili - eeli
-    noise = float(np.median(np.abs(np.diff(global_values) - np.median(np.diff(global_values)))))
+    detection_deltas = np.diff(detection_values)
+    noise = float(np.median(np.abs(
+        detection_deltas - np.median(detection_deltas)
+    )))
     minimum_amplitude = max(1e-9, noise * 6.0)
     if tvi <= minimum_amplitude:
         return _unavailable(

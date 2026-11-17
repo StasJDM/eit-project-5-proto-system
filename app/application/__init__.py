@@ -54,10 +54,13 @@ from .patients import (
 )
 from .eit_settings import ACQUISITION_SETTINGS_KEY, EITSettingsService
 from .engineering_settings import (
+    BREATHING_IDENTIFICATION_METHODS,
+    DEFAULT_BREATHING_IDENTIFICATION_METHOD,
     DEFAULT_PEAK_DETECTION_METHOD,
     DEFAULT_ROI_COUNT,
     DEFAULT_GRAPH_DISPLAY_PERIOD_SECONDS,
     DEFAULT_TREND_DOWNSAMPLING_MODE,
+    DEFAULT_TREND_CHART_MODE,
     DEFAULT_TREND_POINT_MODE,
     DEFAULT_PEEP_ANALYSIS_INTERVAL_SECONDS,
     DEFAULT_PEEP_SILENT_THRESHOLD_PERCENT,
@@ -75,6 +78,7 @@ from .engineering_settings import (
     MAX_PEEP_SILENT_THRESHOLD_PERCENT,
     PEAK_DETECTION_METHODS,
     TREND_DOWNSAMPLING_MODES,
+    TREND_CHART_MODES,
     TREND_POINT_MODES,
     REQUIRED_INTERFACE_TABS,
     WORK_MODES,
@@ -106,6 +110,10 @@ from .breathclf_adapter import (
     DEFAULT_MODEL_FILE,
     BreathClfClassifier,
     default_breath_model_path,
+)
+from .spectral_breathing import (
+    SPECTRAL_ALGORITHM_VERSION,
+    SpectralBreathingClassifier,
 )
 from .session_clock import (
     ELECTRODE_USAGE_SECONDS_SETTING, SessionClockService, SessionClockSnapshot,
@@ -182,12 +190,16 @@ __all__ = [
     "DEFAULT_GRAPH_DISPLAY_PERIOD_SECONDS",
     "DEFAULT_TREND_POINT_MODE",
     "DEFAULT_TREND_DOWNSAMPLING_MODE",
+    "DEFAULT_TREND_CHART_MODE",
     "DEFAULT_PEEP_ANALYSIS_INTERVAL_SECONDS",
     "DEFAULT_PEEP_SILENT_THRESHOLD_PERCENT",
     "DEFAULT_PEAK_DETECTION_METHOD",
+    "BREATHING_IDENTIFICATION_METHODS",
+    "DEFAULT_BREATHING_IDENTIFICATION_METHOD",
     "PEAK_DETECTION_METHODS",
     "TREND_POINT_MODES",
     "TREND_DOWNSAMPLING_MODES",
+    "TREND_CHART_MODES",
     "MIN_PEEP_ANALYSIS_INTERVAL_SECONDS",
     "MAX_PEEP_ANALYSIS_INTERVAL_SECONDS",
     "MIN_PEEP_SILENT_THRESHOLD_PERCENT",
@@ -253,6 +265,8 @@ __all__ = [
     "DEFAULT_MODEL_FILE",
     "BreathClfClassifier",
     "default_breath_model_path",
+    "SPECTRAL_ALGORITHM_VERSION",
+    "SpectralBreathingClassifier",
     "ClassificationMetrics",
     "LabeledBreathingSample",
     "ManualBreathingAssessment",

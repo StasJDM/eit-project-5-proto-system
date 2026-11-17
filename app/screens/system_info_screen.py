@@ -31,6 +31,7 @@ from ..application import (
 )
 from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
 from ..i18n import t, i18n, LANGUAGES
+from ..widgets.section_profile_editor import SectionProfileEditor
 
 
 # ── Language selector dialog ──────────────────────────────────────────────────
@@ -405,6 +406,7 @@ class SystemInfoScreen(QWidget):
         self._engineering_trends_tab = QWidget()
         self._engineering_peep_tab = QWidget()
         self._engineering_visibility_tab = QWidget()
+        self._engineering_section_tab = QWidget()
         self._engineering_sections.addTab(
             self._engineering_general_tab, t("sys_engineering_tab_general")
         )
@@ -416,6 +418,9 @@ class SystemInfoScreen(QWidget):
         )
         self._engineering_sections.addTab(
             self._engineering_visibility_tab, t("sys_engineering_tab_visibility")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_section_tab, t("sys_engineering_tab_section")
         )
         outer.addWidget(self._engineering_sections, stretch=1)
 
@@ -517,6 +522,23 @@ class SystemInfoScreen(QWidget):
         detector_row.addStretch()
         layout.addLayout(detector_row)
 
+        identification_row = QHBoxLayout()
+        self._breathing_identification_label = QLabel(
+            t("sys_engineering_breathing_identification")
+        )
+        identification_row.addWidget(self._breathing_identification_label)
+        self._breathing_identification_combo = QComboBox()
+        self._breathing_identification_combo.addItem(
+            t("sys_breathing_identification_model"), "model"
+        )
+        self._breathing_identification_combo.addItem(
+            t("sys_breathing_identification_spectral"), "spectral"
+        )
+        self._breathing_identification_combo.setMinimumWidth(280)
+        identification_row.addWidget(self._breathing_identification_combo)
+        identification_row.addStretch()
+        layout.addLayout(identification_row)
+
         self._engineering_hint = QLabel(t("sys_engineering_hint"))
         self._engineering_hint.setWordWrap(True)
         self._engineering_hint.setStyleSheet(f"color:{C['text_dim']};")
@@ -526,9 +548,26 @@ class SystemInfoScreen(QWidget):
         self._build_trends_configuration_tab()
         self._build_peep_configuration_tab()
         self._build_visibility_tab()
+        self._build_section_configuration_tab()
 
         button_row = QHBoxLayout()
         button_row.addStretch()
+        self._section_save = QPushButton(t("sys_section_save"))
+        self._section_save.setFixedSize(220, 44)
+        self._section_save.setEnabled(False)
+        self._section_save.setStyleSheet(f"""
+            QPushButton {{
+                background:{C['bg_card']};color:{C['text']};
+                border:1px solid {C['blue_light']};border-radius:6px;
+                font-size:{FONT_BTN}px;font-weight:bold;padding:8px 20px;
+            }}
+            QPushButton:hover {{ background:{C['nav_hover']}; }}
+            QPushButton:disabled {{ color:{C['text_dim']};border-color:{C['border']}; }}
+        """)
+        self._section_save.clicked.connect(
+            self._section_profile_editor.save_profile
+        )
+        button_row.addWidget(self._section_save)
         self._engineering_apply = QPushButton(t("sys_engineering_apply"))
         self._engineering_apply.setFixedSize(220, 44)
         self._engineering_apply.setStyleSheet(f"""
@@ -539,10 +578,17 @@ class SystemInfoScreen(QWidget):
             }}
             QPushButton:hover {{ background:{C['blue_hover']}; }}
             QPushButton:pressed {{ background:{C['blue_dark']}; }}
+            QPushButton:disabled {{
+                background:{C['bg_card']};color:{C['text_dim']};
+                border-color:{C['border']};
+            }}
         """)
         self._engineering_apply.clicked.connect(self._save_engineering_settings)
         button_row.addWidget(self._engineering_apply)
         outer.addLayout(button_row)
+        self._section_profile_editor.dirty_changed.connect(
+            self._on_section_dirty_changed
+        )
 
         current = (
             self._engineering_settings.current
@@ -555,6 +601,19 @@ class SystemInfoScreen(QWidget):
         layout = QVBoxLayout(self._engineering_trends_tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
+
+        chart_row = QHBoxLayout()
+        self._trend_chart_mode_label = QLabel(
+            t("sys_engineering_trend_chart_mode")
+        )
+        chart_row.addWidget(self._trend_chart_mode_label)
+        self._trend_chart_mode_combo = QComboBox()
+        self._trend_chart_mode_combo.addItem(t("sys_trend_chart_bars"), "bars")
+        self._trend_chart_mode_combo.addItem(t("sys_trend_chart_lines"), "lines")
+        self._trend_chart_mode_combo.setMinimumWidth(360)
+        chart_row.addWidget(self._trend_chart_mode_combo)
+        chart_row.addStretch()
+        layout.addLayout(chart_row)
 
         point_row = QHBoxLayout()
         self._trend_point_mode_label = QLabel(t("sys_engineering_trend_point_mode"))
@@ -603,6 +662,12 @@ class SystemInfoScreen(QWidget):
         layout = QVBoxLayout(self._engineering_peep_tab)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
+
+        self._peep_tab_visibility_check = QCheckBox(
+            t("sys_engineering_peep_tab_visibility")
+        )
+        self._peep_tab_visibility_check.setStyleSheet(_visibility_checkbox_style())
+        layout.addWidget(self._peep_tab_visibility_check)
 
         threshold_row = QHBoxLayout()
         self._peep_threshold_label = QLabel(t("sys_engineering_peep_threshold"))
@@ -753,6 +818,19 @@ class SystemInfoScreen(QWidget):
         # Backward-compatible aliases used by older integrations and tests.
         self._show_main_trends_check = self._element_visibility_checks["main.trends"]
         self._show_main_tvi_check = self._element_visibility_checks["main.tvi"]
+        peep_element_check = self._element_visibility_checks["analysis.peep_tab"]
+        self._peep_tab_visibility_check.toggled.connect(
+            peep_element_check.setChecked
+        )
+        peep_element_check.toggled.connect(
+            self._peep_tab_visibility_check.setChecked
+        )
+
+    def _build_section_configuration_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_section_tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._section_profile_editor = SectionProfileEditor()
+        layout.addWidget(self._section_profile_editor)
 
     def _load_engineering_settings(self, settings: EngineeringSettings) -> None:
         for mode, checkbox in self._mode_checks.items():
@@ -763,10 +841,20 @@ class SystemInfoScreen(QWidget):
             settings.peak_detection_method
         )
         self._peak_detector_combo.setCurrentIndex(max(0, detector_index))
+        identification_index = self._breathing_identification_combo.findData(
+            settings.breathing_identification_method
+        )
+        self._breathing_identification_combo.setCurrentIndex(
+            max(0, identification_index)
+        )
         point_mode_index = self._trend_point_mode_combo.findData(
             settings.trend_point_mode
         )
         self._trend_point_mode_combo.setCurrentIndex(max(0, point_mode_index))
+        chart_mode_index = self._trend_chart_mode_combo.findData(
+            settings.trend_chart_mode
+        )
+        self._trend_chart_mode_combo.setCurrentIndex(max(0, chart_mode_index))
         downsampling_index = self._trend_downsampling_combo.findData(
             settings.trend_downsampling_mode
         )
@@ -780,23 +868,35 @@ class SystemInfoScreen(QWidget):
             checkbox.setChecked(tab in settings.visible_tabs)
         for element, checkbox in self._element_visibility_checks.items():
             checkbox.setChecked(settings.is_element_visible(element))
+        self._peep_tab_visibility_check.setChecked(
+            settings.is_element_visible("analysis.peep_tab")
+        )
+        self._section_profile_editor.load(
+            settings.section_profile, settings.custom_section_profiles
+        )
 
     def _validate_mode_selection(self, mode: str, checked: bool) -> None:
         if not checked and not any(box.isChecked() for box in self._mode_checks.values()):
             self._mode_checks[mode].setChecked(True)
 
     def _save_engineering_settings(self) -> None:
+        if self._section_profile_editor.has_unsaved_changes:
+            return
         settings = EngineeringSettings(
             work_modes=tuple(
                 mode for mode, checkbox in self._mode_checks.items() if checkbox.isChecked()
             ),
             roi_count=self._roi_spin.value(),
             peak_detection_method=str(self._peak_detector_combo.currentData()),
+            breathing_identification_method=str(
+                self._breathing_identification_combo.currentData()
+            ),
             graph_display_period_seconds=self._graph_period_slider.value(),
             trend_point_mode=str(self._trend_point_mode_combo.currentData()),
             trend_downsampling_mode=str(
                 self._trend_downsampling_combo.currentData()
             ),
+            trend_chart_mode=str(self._trend_chart_mode_combo.currentData()),
             peep_silent_threshold_percent=self._peep_threshold_spin.value(),
             peep_analysis_interval_seconds=self._peep_interval_spin.value(),
             peep_gravity_angle_degrees=self._peep_gravity_spin.value(),
@@ -813,13 +913,27 @@ class SystemInfoScreen(QWidget):
                 for element in INTERFACE_ELEMENTS[tab]
                 if self._element_visibility_checks[element].isChecked()
             ),
+            section_profile=self._section_profile_editor.active_profile,
+            custom_section_profiles=self._section_profile_editor.custom_profiles,
         )
         if self._engineering_settings is not None:
             self._engineering_settings.save(settings)
+        self._section_profile_editor.load(
+            settings.section_profile, settings.custom_section_profiles
+        )
         self._engineering_apply.setText(t("sys_engineering_saved"))
         QTimer.singleShot(
             1500,
             lambda: self._engineering_apply.setText(t("sys_engineering_apply")),
+        )
+
+    def _on_section_dirty_changed(self, dirty: bool) -> None:
+        self._section_save.setEnabled(
+            dirty and self._section_profile_editor.can_save
+        )
+        self._engineering_apply.setEnabled(not dirty)
+        self._engineering_apply.setToolTip(
+            t("sys_section_apply_blocked_tooltip") if dirty else ""
         )
 
     def _update_graph_period_value(self, seconds: int | None = None) -> None:
@@ -967,6 +1081,8 @@ class SystemInfoScreen(QWidget):
         self._engineering_sections.setTabText(1, t("sys_engineering_tab_trends"))
         self._engineering_sections.setTabText(2, t("sys_engineering_tab_peep"))
         self._engineering_sections.setTabText(3, t("sys_engineering_tab_visibility"))
+        self._engineering_sections.setTabText(4, t("sys_engineering_tab_section"))
+        self._section_profile_editor.retranslate()
         self._mode_group.setTitle(t("sys_engineering_modes"))
         for mode, key in (
             ("adult", "sys_mode_adult"),
@@ -983,7 +1099,21 @@ class SystemInfoScreen(QWidget):
         )
         self._peak_detector_combo.setItemText(1, t("sys_peak_detector_derivative"))
         self._peak_detector_combo.setItemText(2, t("sys_peak_detector_legacy"))
+        self._breathing_identification_label.setText(
+            t("sys_engineering_breathing_identification")
+        )
+        self._breathing_identification_combo.setItemText(
+            0, t("sys_breathing_identification_model")
+        )
+        self._breathing_identification_combo.setItemText(
+            1, t("sys_breathing_identification_spectral")
+        )
         self._trend_point_mode_label.setText(t("sys_engineering_trend_point_mode"))
+        self._trend_chart_mode_label.setText(
+            t("sys_engineering_trend_chart_mode")
+        )
+        self._trend_chart_mode_combo.setItemText(0, t("sys_trend_chart_bars"))
+        self._trend_chart_mode_combo.setItemText(1, t("sys_trend_chart_lines"))
         self._trend_point_mode_combo.setItemText(0, t("sys_trend_points_interval"))
         self._trend_point_mode_combo.setItemText(
             1, t("sys_trend_points_breath_cycle")
@@ -1004,6 +1134,9 @@ class SystemInfoScreen(QWidget):
             t("sys_engineering_trend_configuration_hint")
         )
         self._peep_threshold_label.setText(t("sys_engineering_peep_threshold"))
+        self._peep_tab_visibility_check.setText(
+            t("sys_engineering_peep_tab_visibility")
+        )
         self._peep_interval_label.setText(t("sys_engineering_peep_interval"))
         self._peep_interval_spin.setSuffix(" " + t("analysis_seconds_short"))
         self._peep_gravity_label.setText(t("sys_engineering_peep_gravity"))
@@ -1025,6 +1158,11 @@ class SystemInfoScreen(QWidget):
         for element, checkbox in self._element_visibility_checks.items():
             checkbox.setText(t(_ELEMENT_LABEL_KEYS[element]))
         self._engineering_apply.setText(t("sys_engineering_apply"))
+        self._section_save.setText(t("sys_section_save"))
+        if self._section_profile_editor.has_unsaved_changes:
+            self._engineering_apply.setToolTip(
+                t("sys_section_apply_blocked_tooltip")
+            )
 
         for lbl_key, lbl in self._param_lbls:
             lbl.setText(t(lbl_key))
