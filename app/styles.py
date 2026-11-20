@@ -9,6 +9,9 @@ C = {
     "bg_wave":    "#080e14",
     "bg_nav":     "#0f1923",
     "bg_card":    "#161b22",
+    "bg_table":   "#252a31",
+    "bg_table_alt": "#2b3139",
+    "bg_table_header": "#323943",
 
     # borders
     "border":       "#1e3a5f",
@@ -53,6 +56,8 @@ C = {
     "nav_active_surround_edge": "#2196f3",
     "nav_hover":                "#0d2744",
 }
+
+DEFAULT_APPLICATION_BACKGROUND_COLOR = C["bg_main"]
 
 # ── Закреплённые цвета типов аэрации (T / R / L) ────────────────────────────
 AERATION_COLOR_T = "#ff9800"  # глобальная — оранжевый
@@ -187,11 +192,12 @@ def waveform_bg_dark():
 
 
 # ── Global stylesheet ────────────────────────────────────────────────────────
-def stylesheet() -> str:
+def stylesheet(background_color: str | None = None) -> str:
+    bg_main = background_color or DEFAULT_APPLICATION_BACKGROUND_COLOR
     return f"""
 /* ── Base ── */
 QWidget {{
-    background-color: {C['bg_main']};
+    background-color: {bg_main};
     color: {C['text']};
     font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
     font-size: {FONT_BASE}px;
@@ -241,7 +247,7 @@ QPushButton#nav_btn[active="true"] {{
 
 /* ── Scrollbars ── */
 QScrollBar:vertical {{
-    background: {C['bg_main']};
+    background: {bg_main};
     width: 6px;
     margin: 0;
 }}

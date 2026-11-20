@@ -38,6 +38,7 @@ class TrendService:
         *,
         interval_seconds: float = TREND_INTERVAL_SECONDS,
         clock: Callable[[], datetime] = utc_now,
+        hidden_metrics_provider: Callable[[], tuple[str, ...]] | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
@@ -46,6 +47,7 @@ class TrendService:
         self._lifecycle = lifecycle
         self._interval_seconds = float(interval_seconds)
         self._clock = clock
+        self._hidden_metrics_provider = hidden_metrics_provider or (lambda: ())
         self._position_session_id: UUID | None = None
         self._source_time_origin: datetime | None = None
         self._source_position_origin = 0.0
@@ -201,6 +203,7 @@ class TrendService:
         session = self._lifecycle.current_session
         if not frames or study is None or session is None or session.started_at_utc is None:
             return
+        hidden_metrics = set(self._hidden_metrics_provider())
         roi_count = max((len(frame.roi_values) for frame in frames), default=0)
         regional = [
             [
@@ -210,11 +213,20 @@ class TrendService:
             ]
             for index in range(roi_count)
         ]
-        roi_values = tuple(
+        calculated_roi_values = tuple(
             median(float(value) for value in values) if values else None
             for values in regional
         )
-        bands = len(roi_values) // 2
+        roi_values = tuple(
+            value
+            if (
+                f"roi_{index}_tvi_au" not in hidden_metrics
+                or f"roi_{index}_percent" not in hidden_metrics
+            )
+            else None
+            for index, value in enumerate(calculated_roi_values, start=1)
+        )
+        bands = len(calculated_roi_values) // 2
         relevant_quality = [
             frame for frame in frames
             if frame.quality_reason != "insufficient_data" or frame is frames[-1]
@@ -234,6 +246,7 @@ class TrendService:
         ]
         metric_names = sorted({
             name for frame in frames for name, _value in frame.metric_values
+            if name not in hidden_metrics
         })
         metric_values = {
             name: [
@@ -250,9 +263,10 @@ class TrendService:
         }
         # LuMon defines Aeration/MLI as the mean plethysmogram value over the
         # analysis interval. Keep it alongside the other calculated metrics.
-        aggregated_metrics["mli_au"] = (
-            sum(global_values) / len(global_values) if global_values else None
-        )
+        if "mli_au" not in hidden_metrics:
+            aggregated_metrics["mli_au"] = (
+                sum(global_values) / len(global_values) if global_values else None
+            )
         right_samples = [
             sum(float(value) for value in frame.roi_values[:bands] if value is not None)
             for frame in frames
@@ -276,10 +290,22 @@ class TrendService:
             aggregation_kind=kind,
             sample_count=len(frames),
             global_value=median(global_values) if global_values else None,
-            right_value=median(right_samples) if right_samples else None,
-            left_value=median(left_samples) if left_samples else None,
+            right_value=(
+                median(right_samples)
+                if right_samples and "right_percent" not in hidden_metrics
+                else None
+            ),
+            left_value=(
+                median(left_samples)
+                if left_samples and "left_percent" not in hidden_metrics
+                else None
+            ),
             roi_values=roi_values,
-            respiratory_rate_bpm=frames[-1].respiratory_rate_bpm,
+            respiratory_rate_bpm=(
+                frames[-1].respiratory_rate_bpm
+                if "rr_bpm" not in hidden_metrics
+                else None
+            ),
             metric_values=tuple(sorted(aggregated_metrics.items())),
             quality=quality,
             quality_reason=quality_reason,

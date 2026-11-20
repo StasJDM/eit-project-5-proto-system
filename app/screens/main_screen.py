@@ -1,7 +1,7 @@
 """Main monitoring screen.
 
 Layout:
-  ┌─ left_panel (fixed 265px) ─┬─ waveform_panel (stretch) ─┐
+  ┌─ left_panel (up to 540px) ─┬─ waveform_panel (stretch) ─┐
   │  LungVizWidget              │  WaveformPanel              │
   │  numerical parameters       │                             │
   │  start / counters           │                             │
@@ -10,9 +10,9 @@ Layout:
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QFrame, QSizePolicy, QGridLayout
+    QDialog, QFrame, QSizePolicy, QGridLayout
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont
 
 from ..application import (
@@ -32,6 +32,73 @@ from ..i18n import t, i18n
 
 # How often we repaint the screen (100 ms = 10 fps — enough for visual smoothness)
 PAINT_MS  = 100
+MAIN_LEFT_PANEL_MIN_WIDTH = 380
+MAIN_LEFT_PANEL_WIDTH = 450
+MAIN_LUNG_VIZ_MIN_HEIGHT = 300
+MAIN_LUNG_VIZ_EXPANDED_HEIGHT = 340
+MAIN_LUNG_VIZ_EXPAND_AT_PANEL_HEIGHT = 780
+
+
+class _LungVizWindowOverlay(QDialog):
+    """Temporarily hosts the live map over the entire application window."""
+
+    def __init__(self, visualization: LungVizWidget, parent=None):
+        super().__init__(parent)
+        self.setObjectName("lung_viz_fullscreen_dialog")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setWindowModality(Qt.WindowModal)
+        self.setStyleSheet(f"background-color:{C['bg_panel']};")
+        self._visualization = visualization
+        self._source_parent = visualization.parentWidget()
+        self._source_layout = self._source_parent.layout()
+        self._source_index = self._source_layout.indexOf(visualization)
+        self._restored = False
+
+        self._source_layout.removeWidget(visualization)
+        visualization.setParent(self)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(8)
+        header = QHBoxLayout()
+        header.addStretch()
+        self.close_button = QPushButton("×")
+        self.close_button.setObjectName("lung_viz_fullscreen_close")
+        self.close_button.setAccessibleName(t("lung_fullscreen_close"))
+        self.close_button.setToolTip(t("lung_fullscreen_close"))
+        self.close_button.setFixedSize(64, 64)
+        self.close_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color:{C['alarm']};color:white;
+                border:2px solid #ff6b6b;border-radius:32px;
+                font-size:42px;font-weight:bold;padding:0;
+            }}
+            QPushButton:hover {{ background-color:#c62828; }}
+            QPushButton:pressed {{ background-color:#b71c1c; }}
+        """)
+        self.close_button.clicked.connect(self.close)
+        header.addWidget(self.close_button)
+        layout.addLayout(header)
+        layout.addWidget(visualization, stretch=1)
+        i18n.language_changed.connect(self._retranslate)
+
+    def _retranslate(self, _language: str) -> None:
+        label = t("lung_fullscreen_close")
+        self.close_button.setAccessibleName(label)
+        self.close_button.setToolTip(label)
+
+    def _restore_visualization(self) -> None:
+        if self._restored:
+            return
+        self.layout().removeWidget(self._visualization)
+        self._visualization.setParent(self._source_parent)
+        self._source_layout.insertWidget(self._source_index, self._visualization)
+        self._visualization.show()
+        self._restored = True
+
+    def closeEvent(self, event) -> None:
+        self._restore_visualization()
+        super().closeEvent(event)
 
 
 class _ParamBox(QFrame):
@@ -59,10 +126,10 @@ class _ParamBox(QFrame):
         lay.setContentsMargins(10, 4, 10, 4)
         lay.setSpacing(6)
 
-        lbl = QLabel(label)
-        lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        lbl.setStyleSheet(f"color:{C['text_dim']};font-size:{FONT_LABEL}px;")
-        lay.addWidget(lbl)
+        self._lbl_title = QLabel(label)
+        self._lbl_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self._lbl_title.setStyleSheet(f"color:{C['text_dim']};font-size:{FONT_LABEL}px;")
+        lay.addWidget(self._lbl_title)
 
         lay.addStretch(1)
 
@@ -74,14 +141,20 @@ class _ParamBox(QFrame):
         )
         lay.addWidget(self._lbl_val)
 
+        self._lbl_unit = None
         if unit:
-            lbl_u = QLabel(unit)
-            lbl_u.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-            lbl_u.setFixedWidth(34)
-            lbl_u.setStyleSheet(
+            self._lbl_unit = QLabel(unit)
+            self._lbl_unit.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+            self._lbl_unit.setMinimumWidth(42)
+            self._lbl_unit.setStyleSheet(
                 f"color:{C['text_lo']};font-size:{FONT_SMALL}px;"
             )
-            lay.addWidget(lbl_u)
+            lay.addWidget(self._lbl_unit)
+
+    def set_text(self, label: str, unit: str = "") -> None:
+        self._lbl_title.setText(label)
+        if self._lbl_unit is not None:
+            self._lbl_unit.setText(unit)
 
     def set_value(self, v, reason: str | None = None):
         if v is None:
@@ -101,7 +174,9 @@ class _ParamBox(QFrame):
 class LeftPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(380)
+        self.setMinimumWidth(MAIN_LEFT_PANEL_MIN_WIDTH)
+        self.setMaximumWidth(MAIN_LEFT_PANEL_WIDTH)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.setStyleSheet(f"""
             background-color: {C['bg_panel']};
             border-right: 2px solid {C['border']};
@@ -113,7 +188,7 @@ class LeftPanel(QWidget):
 
         # ── Lung visualisation ────────────────────────────────────────────────
         self.lung_viz = LungVizWidget()
-        self.lung_viz.setMinimumHeight(300)
+        self.lung_viz.setMinimumHeight(MAIN_LUNG_VIZ_MIN_HEIGHT)
         lay.addWidget(self.lung_viz)
 
         lay.addWidget(self._hsep())
@@ -154,8 +229,15 @@ class LeftPanel(QWidget):
         eeli_lay.addWidget(self.box_eili, 1)
         lay.addWidget(eeli_row)
 
+        ventilation_row = QWidget()
+        ventilation_lay = QHBoxLayout(ventilation_row)
+        ventilation_lay.setContentsMargins(0, 0, 0, 0)
+        ventilation_lay.setSpacing(4)
         self.box_mvi = _ParamBox("MVi")
-        lay.addWidget(self.box_mvi)
+        self.box_rr = _ParamBox(t("wave_rr_short"), t("wave_rr_unit"))
+        ventilation_lay.addWidget(self.box_mvi, 1)
+        ventilation_lay.addWidget(self.box_rr, 1)
+        lay.addWidget(ventilation_row)
 
         lay.addStretch(1)
         lay.addWidget(self._hsep())
@@ -171,10 +253,28 @@ class LeftPanel(QWidget):
 
         # ── Counters ──────────────────────────────────────────────────────────
         self.counters = DurationCounterPair(
-            stacked=True, large=True, horizontal=True
+            stacked=True,
+            large=True,
+            horizontal=True,
+            single_line_labels=True,
+            label_font_size=FONT_LABEL + 2,
         )
 
         i18n.language_changed.connect(self.retranslate)
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(MAIN_LEFT_PANEL_WIDTH, hint.height())
+
+    def resizeEvent(self, event) -> None:
+        target_height = (
+            MAIN_LUNG_VIZ_EXPANDED_HEIGHT
+            if event.size().height() >= MAIN_LUNG_VIZ_EXPAND_AT_PANEL_HEIGHT
+            else MAIN_LUNG_VIZ_MIN_HEIGHT
+        )
+        if self.lung_viz.minimumHeight() != target_height:
+            self.lung_viz.setMinimumHeight(target_height)
+        super().resizeEvent(event)
 
     def sync_start(self, running: bool):
         self.btn_start.setProperty("monitoring_running", running)
@@ -187,6 +287,7 @@ class LeftPanel(QWidget):
 
     def retranslate(self):
         self.counters.retranslate()
+        self.box_rr.set_text(t("wave_rr_short"), t("wave_rr_unit"))
         if not bool(self.btn_start.property("monitoring_running")):
             self.btn_start.setText(t("btn_start"))
         else:
@@ -206,6 +307,8 @@ class LeftPanel(QWidget):
         self.box_vd.set_value(snap.vd_ratio, snap.status_for("vd_ratio").reason)
         self.box_tvi.set_value(snap.tvi, snap.status_for("tvi").reason)
         self.box_mvi.set_value(snap.mvi, snap.status_for("mvi").reason)
+        rr_value = None if snap.rr is None else f"{snap.rr:.0f}"
+        self.box_rr.set_value(rr_value, snap.status_for("rr").reason)
         self.box_eeli.set_value(snap.eeli, snap.status_for("eeli").reason)
         self.box_eili.set_value(snap.eili, snap.status_for("eili").reason)
         self.lung_viz.update_state(
@@ -264,11 +367,20 @@ class MainScreen(QWidget):
         root.addWidget(body, stretch=1)
 
         self.left    = LeftPanel()
+        self._lung_fullscreen_dialog: _LungVizWindowOverlay | None = None
+        self.left.lung_viz.set_fullscreen_activation_enabled(True)
+        self.left.lung_viz.activated.connect(self._open_lung_visualization_fullscreen)
         self.waves = WaveformPanel(
             show_velocity=True,
             roi_count=(engineering_settings.current.roi_count if engineering_settings else 8),
             bottom_left_widget=self.left.counters,
         )
+        # On the main monitor RR belongs to the numerical-parameter panel.
+        # Hide the former graph-side column and its velocity-row spacer so the
+        # two graph canvases remain aligned.
+        for row in (self.waves.row_global, self.waves.row_velocity):
+            if row is not None and row.rr_box is not None:
+                row.rr_box.setVisible(False)
         if engineering_settings is not None:
             self._unsubscribe_engineering = engineering_settings.subscribe(
                 self._apply_engineering_settings
@@ -296,24 +408,61 @@ class MainScreen(QWidget):
         self._render(self._monitoring.read_view(self._display_window_sec))
         i18n.language_changed.connect(self._on_paint)
 
+    def _open_lung_visualization_fullscreen(self) -> None:
+        dialog = self._lung_fullscreen_dialog
+        if dialog is not None and dialog.isVisible():
+            return
+        dialog = _LungVizWindowOverlay(self.left.lung_viz, self)
+        self._lung_fullscreen_dialog = dialog
+        dialog.finished.connect(self._clear_lung_fullscreen_dialog)
+        host_window = self.window()
+        dialog.setGeometry(host_window.geometry())
+        dialog.show()
+
+    def _clear_lung_fullscreen_dialog(self, _result: int) -> None:
+        self._lung_fullscreen_dialog = None
+
     def _apply_engineering_settings(self, settings: EngineeringSettings) -> None:
         self._display_window_sec = float(settings.graph_display_period_seconds)
         self.waves.set_roi_count(settings.roi_count)
+        self.waves.set_fill_enabled(settings.waveform_fill_enabled)
         self.left.lung_viz.set_section_profile(
             getattr(self._monitoring, "section_profile", settings.section_profile)
         )
         visible = settings.is_element_visible
+        metric_visible = settings.is_aeration_metric_visible
         self._quality_banner.setVisible(visible("main.quality"))
         self.left.lung_viz.setVisible(visible("main.lung_map"))
-        self.left.box_t.setVisible(visible("main.total"))
-        for widget in (self.left.box_r, self.left.box_l):
-            widget.setVisible(visible("main.regional"))
-        self.left.box_lr.setVisible(visible("main.rl"))
-        self.left.box_vd.setVisible(visible("main.vd"))
-        self.left.box_tvi.setVisible(visible("main.tvi"))
-        self.left.box_eeli.setVisible(visible("main.eeli"))
-        self.left.box_eili.setVisible(visible("main.eili"))
-        self.left.box_mvi.setVisible(visible("main.mvi"))
+        self.left.box_t.setVisible(
+            visible("main.total") and metric_visible("total_percent")
+        )
+        self.left.box_r.setVisible(
+            visible("main.regional") and metric_visible("right_percent")
+        )
+        self.left.box_l.setVisible(
+            visible("main.regional") and metric_visible("left_percent")
+        )
+        self.left.box_lr.setVisible(
+            visible("main.rl") and metric_visible("right_left_ratio")
+        )
+        self.left.box_vd.setVisible(
+            visible("main.vd") and metric_visible("ventral_dorsal_ratio")
+        )
+        self.left.box_tvi.setVisible(
+            visible("main.tvi") and metric_visible("tvi_au")
+        )
+        self.left.box_eeli.setVisible(
+            visible("main.eeli") and metric_visible("eeli_au")
+        )
+        self.left.box_eili.setVisible(
+            visible("main.eili") and metric_visible("eili_au")
+        )
+        self.left.box_mvi.setVisible(
+            visible("main.mvi") and metric_visible("mvi_au_per_min")
+        )
+        self.left.box_rr.setVisible(
+            visible("main.respiratory_rate") and metric_visible("rr_bpm")
+        )
         for widget in (self.waves._hdr_t, self.waves.row_global):
             if widget is not None:
                 widget.setVisible(visible("main.global_waveform"))
@@ -333,9 +482,11 @@ class MainScreen(QWidget):
             or visible("main.regional_waveforms")
             or visible("main.velocity")
         )
-        if self.waves.row_global is not None and self.waves.row_global.rr_box is not None:
-            self.waves.row_global.rr_box.setVisible(visible("main.respiratory_rate"))
         self.waves.set_trends_visible(visible("main.trends"))
+        self.waves.set_aeration_metric_visibility(
+            settings.hidden_aeration_metrics,
+            respiratory_rate_visible=False,
+        )
         for widget in (self.left.btn_start, self.left.counters, self.waves.btn_event):
             if widget is not None:
                 widget.setVisible(visible("main.controls"))

@@ -5,19 +5,91 @@ from __future__ import annotations
 import math
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor, QPainter, QPainterPath, QPalette, QPen, QPolygonF,
+)
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QStyledItemDelegate,
+    QVBoxLayout, QWidget,
 )
 
 from ..i18n import t
 from ..reconstruction.geometry import (
-    CONTOUR_SAMPLE_COUNT, GeometryProfile, builtin_geometry_profiles,
-    ellipse_profile,
+    CONTOUR_SAMPLE_COUNT, LUNG_CONTOUR_SAMPLE_COUNT, GeometryProfile,
+    builtin_geometry_profiles, ellipse_profile,
 )
 from ..styles import C
+
+
+class _TouchComboDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index) -> QSize:
+        size = super().sizeHint(option, index)
+        size.setHeight(max(48, size.height()))
+        return size
+
+
+def _configure_section_combo(combo: QComboBox) -> None:
+    """Keep section-editor popup choices readable and touch-friendly on macOS."""
+    combo.setMinimumHeight(48)
+    combo.setMaxVisibleItems(8)
+    combo.setItemDelegate(_TouchComboDelegate(combo))
+    combo.setStyleSheet(f"""
+        QComboBox {{
+            background-color:{C['bg_card']};
+            color:{C['text']};
+            border:1px solid {C['border_light']};
+            border-radius:6px;
+            padding:7px 40px 7px 12px;
+            font-size:18px;
+        }}
+        QComboBox:focus {{ border-color:{C['blue_light']}; }}
+        QComboBox:disabled {{
+            background-color:{C['bg_panel']};
+            color:{C['text_dim']};
+            border-color:{C['border']};
+        }}
+        QComboBox::drop-down {{
+            border:none;
+            width:36px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color:{C['bg_panel']};
+            color:{C['text']};
+            border:1px solid {C['border_light']};
+            outline:0;
+            selection-background-color:{C['blue']};
+            selection-color:{C['text']};
+        }}
+        QComboBox QListView::item {{
+            min-height:44px;
+            padding:4px 12px;
+        }}
+    """)
+
+    # The popup is a top-level native window on macOS and may not inherit the
+    # combo's stylesheet. Apply its palette and rules directly as well.
+    view = combo.view()
+    palette = view.palette()
+    palette.setColor(QPalette.Base, QColor(C["bg_panel"]))
+    palette.setColor(QPalette.Window, QColor(C["bg_panel"]))
+    palette.setColor(QPalette.Text, QColor(C["text"]))
+    palette.setColor(QPalette.WindowText, QColor(C["text"]))
+    palette.setColor(QPalette.Highlight, QColor(C["blue"]))
+    palette.setColor(QPalette.HighlightedText, QColor(C["text"]))
+    view.setPalette(palette)
+    view.setStyleSheet(f"""
+        QAbstractItemView {{
+            background-color:{C['bg_panel']};
+            color:{C['text']};
+            border:1px solid {C['border_light']};
+            outline:0;
+            selection-background-color:{C['blue']};
+            selection-color:{C['text']};
+        }}
+        QListView::item {{ min-height:44px;padding:4px 12px; }}
+    """)
 
 
 def _sample_factors(profile: GeometryProfile) -> tuple[float, ...]:
@@ -57,7 +129,11 @@ class SectionContourCanvas(QWidget):
         self.vertical_symmetry = True
         self.horizontal_symmetry = True
         self._dragging = False
+        self._drag_mode: str | None = None
+        self._drag_start_screen = QPointF()
+        self._drag_start_center = (0.0, 0.0)
         self.editable = False
+        self.edit_target = "section"
 
     @property
     def profile(self) -> GeometryProfile:
@@ -77,6 +153,12 @@ class SectionContourCanvas(QWidget):
             cx + radius * math.cos(angle) * scale,
             cy - radius * math.sin(angle) * scale,
         )
+
+    def _lung_screen_point(self, side: str, index: int) -> tuple[float, float]:
+        cx, cy, scale = self._center_and_scale()
+        x, y = self._profile.lung_point(side, index)
+        # Present the patient in direct orientation, as in LungVizWidget.
+        return cx - x * scale, cy - y * scale
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -100,11 +182,49 @@ class SectionContourCanvas(QWidget):
         painter.setPen(QPen(QColor(C["blue_light"]), 2))
         painter.drawPath(path)
 
+        if self._profile.lungs_enabled:
+            for side in ("left", "right"):
+                lung_points = [
+                    self._lung_screen_point(side, index)
+                    for index in range(LUNG_CONTOUR_SAMPLE_COUNT)
+                ]
+                lung_path = QPainterPath()
+                lung_path.moveTo(*lung_points[0])
+                for point in lung_points[1:]:
+                    lung_path.lineTo(*point)
+                lung_path.closeSubpath()
+                active = self.edit_target == side
+                painter.setBrush(QColor(190, 177, 151, 75))
+                painter.setPen(QPen(QColor("#ffc857" if active else "#bdb39f"), 2))
+                painter.drawPath(lung_path)
+                if active:
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor("#ffc857" if self.editable else C["text_dim"]))
+                    for x, y in lung_points:
+                        painter.drawEllipse(int(x - 3), int(y - 3), 6, 6)
+                    center_x, center_y = self._profile.lung_center(side)
+                    center_screen_x = cx - center_x * self._profile.radius_m * _scale
+                    center_screen_y = cy - center_y * self._profile.radius_m * _scale
+                    painter.setPen(QPen(QColor("#ffc857"), 2))
+                    painter.setBrush(QColor(C["bg_card"]))
+                    painter.drawEllipse(
+                        QPointF(center_screen_x, center_screen_y), 9.0, 9.0
+                    )
+                    painter.drawLine(
+                        QPointF(center_screen_x - 5.0, center_screen_y),
+                        QPointF(center_screen_x + 5.0, center_screen_y),
+                    )
+                    painter.drawLine(
+                        QPointF(center_screen_x, center_screen_y - 5.0),
+                        QPointF(center_screen_x, center_screen_y + 5.0),
+                    )
+
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#ffc857" if self.editable else C["text_dim"]))
-        for index in range(0, CONTOUR_SAMPLE_COUNT, 2):
-            x, y = points[index]
-            painter.drawEllipse(int(x - 3), int(y - 3), 6, 6)
+        if self.edit_target == "section":
+            for index in range(0, CONTOUR_SAMPLE_COUNT, 2):
+                x, y = points[index]
+                painter.drawEllipse(int(x - 3), int(y - 3), 6, 6)
         painter.setBrush(QColor("#40c4ff"))
         for index in range(16):
             angle = 2.0 * math.pi * index / 16 - math.pi / 2
@@ -114,19 +234,99 @@ class SectionContourCanvas(QWidget):
     def mousePressEvent(self, event) -> None:
         if self.editable and event.button() == Qt.LeftButton:
             self._dragging = True
+            self._drag_mode = "reshape"
+            if (
+                self.edit_target in {"left", "right"}
+                and self._profile.lungs_enabled
+                and self._lung_hit_mode(
+                    self.edit_target, event.position().x(), event.position().y()
+                ) == "move"
+            ):
+                self._drag_mode = "move"
+                self._drag_start_screen = event.position()
+                self._drag_start_center = self._profile.lung_center(self.edit_target)
+                self.setCursor(Qt.ClosedHandCursor)
+                return
             self._edit_at(event.position().x(), event.position().y())
 
     def mouseMoveEvent(self, event) -> None:
         if self._dragging:
-            self._edit_at(event.position().x(), event.position().y())
+            if self._drag_mode == "move":
+                self._move_lung_to(event.position().x(), event.position().y())
+            else:
+                self._edit_at(event.position().x(), event.position().y())
 
     def mouseReleaseEvent(self, event) -> None:
         if self._dragging and event.button() == Qt.LeftButton:
             self._dragging = False
+            self._drag_mode = None
+            self.setCursor(Qt.CrossCursor if self.editable else Qt.ArrowCursor)
             self.profile_edit_finished.emit(self._profile)
+
+    def _lung_hit_mode(self, side: str, screen_x: float, screen_y: float) -> str:
+        point = QPointF(screen_x, screen_y)
+        lung_points = [
+            QPointF(*self._lung_screen_point(side, index))
+            for index in range(LUNG_CONTOUR_SAMPLE_COUNT)
+        ]
+        if any(
+            math.hypot(point.x() - handle.x(), point.y() - handle.y()) <= 14.0
+            for handle in lung_points
+        ):
+            return "reshape"
+        if QPolygonF(lung_points).containsPoint(point, Qt.OddEvenFill):
+            return "move"
+        return "reshape"
+
+    def _move_lung_to(self, screen_x: float, screen_y: float) -> None:
+        _cx, _cy, scale = self._center_and_scale()
+        delta_x = screen_x - self._drag_start_screen.x()
+        delta_y = screen_y - self._drag_start_screen.y()
+        normalized_scale = max(self._profile.radius_m * scale, 1e-9)
+        requested = (
+            self._drag_start_center[0] - delta_x / normalized_scale,
+            self._drag_start_center[1] - delta_y / normalized_scale,
+        )
+        edited = self._profile.with_lung_center(self.edit_target, requested)
+        self.set_profile(edited)
+        self.profile_edited.emit(edited)
 
     def _edit_at(self, screen_x: float, screen_y: float) -> None:
         cx, cy, scale = self._center_and_scale()
+        if self.edit_target in {"left", "right"} and self._profile.lungs_enabled:
+            # Lung contours use direct patient orientation on screen.
+            x, y = -(screen_x - cx) / scale, -(screen_y - cy) / scale
+            center_x_factor, center_y_factor = self._profile.lung_center(
+                self.edit_target
+            )
+            center_x = self._profile.radius_m * center_x_factor
+            center_y = self._profile.radius_m * center_y_factor
+            normalized_x = (x - center_x) / (self._profile.radius_m * 0.235)
+            normalized_y = (y - center_y) / (self._profile.radius_m * 0.46)
+            angle = math.atan2(normalized_y, normalized_x) % (2.0 * math.pi)
+            index = round(
+                angle * LUNG_CONTOUR_SAMPLE_COUNT / (2.0 * math.pi)
+            ) % LUNG_CONTOUR_SAMPLE_COUNT
+            factor = max(0.35, min(1.45, math.hypot(normalized_x, normalized_y)))
+            factors = list(self._profile.lung_radius_factors(self.edit_target))
+            indices = {index}
+            if self.horizontal_symmetry:
+                indices.add((-index) % LUNG_CONTOUR_SAMPLE_COUNT)
+            if self.vertical_symmetry:
+                indices.update(
+                    (LUNG_CONTOUR_SAMPLE_COUNT // 2 - item)
+                    % LUNG_CONTOUR_SAMPLE_COUNT
+                    for item in tuple(indices)
+                )
+            for item in indices:
+                factors[item] = factor
+            edited = self._profile.with_lung_contour(
+                self.edit_target, tuple(factors)
+            )
+            self.set_profile(edited)
+            self.profile_edited.emit(edited)
+            return
+
         x, y = (screen_x - cx) / scale, -(screen_y - cy) / scale
         angle = math.atan2(y, x) % (2.0 * math.pi)
         index = round(angle * CONTOUR_SAMPLE_COUNT / (2.0 * math.pi)) % CONTOUR_SAMPLE_COUNT
@@ -191,6 +391,7 @@ class SectionProfileEditor(QWidget):
         controls.addWidget(self.profile_label)
         self.profile_combo = QComboBox()
         self.profile_combo.setMinimumWidth(300)
+        _configure_section_combo(self.profile_combo)
         self.profile_combo.currentIndexChanged.connect(self._select_profile)
         controls.addWidget(self.profile_combo)
 
@@ -248,6 +449,20 @@ class SectionProfileEditor(QWidget):
         for editor in (self.width_spin, self.height_spin, self.rotation_spin):
             editor.valueChanged.connect(self._parametric_changed)
 
+        self.lungs_check = QCheckBox(t("sys_section_lungs_enabled"))
+        self.lungs_check.setChecked(True)
+        self.lungs_check.toggled.connect(self._lungs_toggled)
+        controls.addWidget(self.lungs_check)
+        self.edit_target_label = QLabel(t("sys_section_edit_target"))
+        controls.addWidget(self.edit_target_label)
+        self.edit_target_combo = QComboBox()
+        self.edit_target_combo.addItem(t("sys_section_target_section"), "section")
+        self.edit_target_combo.addItem(t("sys_section_target_left_lung"), "left")
+        self.edit_target_combo.addItem(t("sys_section_target_right_lung"), "right")
+        _configure_section_combo(self.edit_target_combo)
+        self.edit_target_combo.currentIndexChanged.connect(self._edit_target_changed)
+        controls.addWidget(self.edit_target_combo)
+
         self.vertical_check = QCheckBox(t("sys_section_vertical_symmetry"))
         self.horizontal_check = QCheckBox(t("sys_section_horizontal_symmetry"))
         self.vertical_check.setChecked(True)
@@ -288,6 +503,14 @@ class SectionProfileEditor(QWidget):
         self.width_label.setText(t("sys_section_width"))
         self.height_label.setText(t("sys_section_height"))
         self.rotation_label.setText(t("sys_section_rotation"))
+        self.lungs_check.setText(t("sys_section_lungs_enabled"))
+        self.edit_target_label.setText(t("sys_section_edit_target"))
+        for index, key in enumerate((
+            "sys_section_target_section",
+            "sys_section_target_left_lung",
+            "sys_section_target_right_lung",
+        )):
+            self.edit_target_combo.setItemText(index, t(key))
         self.vertical_check.setText(t("sys_section_vertical_symmetry"))
         self.horizontal_check.setText(t("sys_section_horizontal_symmetry"))
         self.smooth_button.setText(t("sys_section_smooth"))
@@ -388,6 +611,7 @@ class SectionProfileEditor(QWidget):
         self.height_spin.setValue(height)
         self.rotation_spin.setValue(profile.rotation_degrees)
         self.name_edit.setText(profile.display_name)
+        self.lungs_check.setChecked(profile.lungs_enabled)
         self.canvas.set_profile(profile)
         editable = profile.profile_id not in self._builtin_ids()
         for widget in (
@@ -398,8 +622,15 @@ class SectionProfileEditor(QWidget):
             self.vertical_check,
             self.horizontal_check,
             self.smooth_button,
+            self.lungs_check,
         ):
             widget.setEnabled(editable)
+        self.edit_target_combo.setEnabled(
+            editable and (
+                profile.lungs_enabled
+                or self.edit_target_combo.currentData() == "section"
+            )
+        )
         self.canvas.editable = editable
         self.canvas.setCursor(Qt.CrossCursor if editable else Qt.ArrowCursor)
         self.delete_button.setEnabled(editable)
@@ -536,19 +767,19 @@ class SectionProfileEditor(QWidget):
             rotation_degrees=self.rotation_spin.value(),
             profile_id=self._active.profile_id,
             display_name=self._active.display_name,
+            lungs_enabled=self._active.lungs_enabled,
+            left_lung_radius_factors=self._active.left_lung_radius_factors,
+            right_lung_radius_factors=self._active.right_lung_radius_factors,
+            left_lung_center=self._active.left_lung_center,
+            right_lung_center=self._active.right_lung_center,
         )
         self._record_change(profile)
 
     def _radial_edited(self, profile: GeometryProfile) -> None:
         if not self._is_editable():
             return
-        edited = profile.with_contour(
-            _sample_factors(profile),
-            profile_id=self._active.profile_id,
-            display_name=self._active.display_name,
-        )
-        self._active = edited
-        self.canvas.set_profile(edited)
+        self._active = profile
+        self.canvas.set_profile(profile)
         self._update_action_state()
 
     def _finish_radial_edit(self, profile: GeometryProfile) -> None:
@@ -557,6 +788,16 @@ class SectionProfileEditor(QWidget):
 
     def _smooth(self) -> None:
         if not self._is_editable():
+            return
+        target = str(self.edit_target_combo.currentData())
+        if target in {"left", "right"}:
+            factors = self._active.lung_radius_factors(target)
+            smoothed = tuple(
+                (factors[index - 1] + 2.0 * factors[index] + factors[(index + 1) % len(factors)])
+                / 4.0
+                for index in range(len(factors))
+            )
+            self._record_change(self._active.with_lung_contour(target, smoothed))
             return
         factors = _sample_factors(self._active)
         smoothed = tuple(
@@ -570,4 +811,19 @@ class SectionProfileEditor(QWidget):
             display_name=self._active.display_name,
         )
         self._record_change(profile)
+
+    def _lungs_toggled(self, checked: bool) -> None:
+        if self._loading or not self._is_editable():
+            return
+        if not checked and self.edit_target_combo.currentData() != "section":
+            self.edit_target_combo.setCurrentIndex(0)
+        self._record_change(self._active.with_lungs_enabled(checked))
+
+    def _edit_target_changed(self, _index: int) -> None:
+        target = str(self.edit_target_combo.currentData())
+        if target in {"left", "right"} and not self._active.lungs_enabled:
+            target = "section"
+            self.edit_target_combo.setCurrentIndex(0)
+        self.canvas.edit_target = target
+        self.canvas.update()
 

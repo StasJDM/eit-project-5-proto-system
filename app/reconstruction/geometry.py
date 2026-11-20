@@ -8,6 +8,11 @@ from typing import Any, Mapping
 
 
 CONTOUR_SAMPLE_COUNT = 64
+LUNG_CONTOUR_SAMPLE_COUNT = 32
+
+
+def _default_lung_factors() -> tuple[float, ...]:
+    return (1.0,) * LUNG_CONTOUR_SAMPLE_COUNT
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,11 @@ class GeometryProfile:
     width_m: float | None = None
     height_m: float | None = None
     rotation_degrees: float = 0.0
+    lungs_enabled: bool = True
+    left_lung_radius_factors: tuple[float, ...] = ()
+    right_lung_radius_factors: tuple[float, ...] = ()
+    left_lung_center: tuple[float, float] = (0.28, 0.0)
+    right_lung_center: tuple[float, float] = (-0.28, 0.0)
 
     def __post_init__(self) -> None:
         if not self.profile_id.strip():
@@ -70,6 +80,32 @@ class GeometryProfile:
                 raise ValueError("Размеры эллипса должны быть положительными")
         if not math.isfinite(self.rotation_degrees):
             raise ValueError("Поворот контура должен быть конечным")
+        if not isinstance(self.lungs_enabled, bool):
+            raise ValueError("Флаг отображения лёгких должен быть boolean")
+        for label, factors in (
+            ("левого лёгкого", self.left_lung_radius_factors),
+            ("правого лёгкого", self.right_lung_radius_factors),
+        ):
+            if factors and len(factors) != LUNG_CONTOUR_SAMPLE_COUNT:
+                raise ValueError(
+                    f"Контур {label} должен содержать "
+                    f"{LUNG_CONTOUR_SAMPLE_COUNT} отсчёта"
+                )
+            if any(not math.isfinite(v) or not 0.35 <= v <= 1.45 for v in factors):
+                raise ValueError(
+                    f"Радиальные коэффициенты {label} должны лежать в диапазоне [0.35, 1.45]"
+                )
+        for label, center in (
+            ("левого лёгкого", self.left_lung_center),
+            ("правого лёгкого", self.right_lung_center),
+        ):
+            if len(center) != 2 or any(
+                not math.isfinite(value) or abs(value) > 1.5 for value in center
+            ):
+                raise ValueError(
+                    f"Центр {label} должен содержать две конечные координаты "
+                    "в диапазоне [-1.5, 1.5]"
+                )
 
     def radius_at(self, angle_radians: float) -> float:
         """Радиус границы с периодической линейной интерполяцией."""
@@ -119,6 +155,111 @@ class GeometryProfile:
             source_reference=None,
         )
 
+    def lung_radius_factors(self, side: str) -> tuple[float, ...]:
+        """Return the editable normalized contour for one anatomical lung."""
+
+        if side == "left":
+            return self.left_lung_radius_factors or _default_lung_factors()
+        if side == "right":
+            return self.right_lung_radius_factors or _default_lung_factors()
+        raise ValueError("side must be 'left' or 'right'")
+
+    def lung_point(self, side: str, index: int) -> tuple[float, float]:
+        """Return a lung contour point in the physical section coordinates."""
+
+        factors = self.lung_radius_factors(side)
+        angle = 2.0 * math.pi * (index % len(factors)) / len(factors)
+        center_x, center_y = self.lung_center(side)
+        factor = factors[index % len(factors)]
+        return (
+            self.radius_m * (center_x + 0.235 * factor * math.cos(angle)),
+            self.radius_m * (center_y + 0.46 * factor * math.sin(angle)),
+        )
+
+    def lung_center(self, side: str) -> tuple[float, float]:
+        """Return the normalized physical center of one lung."""
+
+        if side == "left":
+            return self.left_lung_center
+        if side == "right":
+            return self.right_lung_center
+        raise ValueError("side must be 'left' or 'right'")
+
+    def _lung_fits_at(self, side: str, center: tuple[float, float]) -> bool:
+        factors = self.lung_radius_factors(side)
+        center_x, center_y = center
+        for index, factor in enumerate(factors):
+            angle = 2.0 * math.pi * index / len(factors)
+            x = self.radius_m * (
+                center_x + 0.235 * factor * math.cos(angle)
+            )
+            y = self.radius_m * (
+                center_y + 0.46 * factor * math.sin(angle)
+            )
+            point_radius = math.hypot(x, y)
+            point_angle = math.atan2(y, x)
+            if point_radius > self.radius_at(point_angle) * 0.995:
+                return False
+        return True
+
+    def constrained_lung_center(
+        self, side: str, requested: tuple[float, float]
+    ) -> tuple[float, float]:
+        """Clamp a requested lung translation to the section boundary."""
+
+        target = tuple(float(value) for value in requested)
+        if len(target) != 2 or any(not math.isfinite(value) for value in target):
+            raise ValueError("Центр лёгкого должен содержать две конечные координаты")
+        if self._lung_fits_at(side, target):
+            return target
+
+        current = self.lung_center(side)
+        anchor = current if self._lung_fits_at(side, current) else (0.0, 0.0)
+        if not self._lung_fits_at(side, anchor):
+            return current
+        low, high = 0.0, 1.0
+        for _ in range(32):
+            fraction = (low + high) / 2.0
+            candidate = (
+                anchor[0] + (target[0] - anchor[0]) * fraction,
+                anchor[1] + (target[1] - anchor[1]) * fraction,
+            )
+            if self._lung_fits_at(side, candidate):
+                low = fraction
+            else:
+                high = fraction
+        return (
+            anchor[0] + (target[0] - anchor[0]) * low,
+            anchor[1] + (target[1] - anchor[1]) * low,
+        )
+
+    def with_lung_center(
+        self, side: str, center: tuple[float, float]
+    ) -> "GeometryProfile":
+        """Move one lung while keeping its complete contour inside the section."""
+
+        value = self.constrained_lung_center(side, center)
+        if side == "left":
+            return replace(self, left_lung_center=value)
+        if side == "right":
+            return replace(self, right_lung_center=value)
+        raise ValueError("side must be 'left' or 'right'")
+
+    def with_lung_contour(
+        self, side: str, radius_factors: tuple[float, ...]
+    ) -> "GeometryProfile":
+        """Replace one lung contour while preserving the section geometry."""
+
+        values = tuple(float(value) for value in radius_factors)
+        if side == "left":
+            return replace(self, left_lung_radius_factors=values)
+        if side == "right":
+            return replace(self, right_lung_radius_factors=values)
+        raise ValueError("side must be 'left' or 'right'")
+
+    def with_lungs_enabled(self, enabled: bool) -> "GeometryProfile":
+        return replace(self, lungs_enabled=bool(enabled))
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize a profile for engineering settings and study snapshots."""
 
@@ -137,6 +278,11 @@ class GeometryProfile:
             "width_m": self.width_m,
             "height_m": self.height_m,
             "rotation_degrees": self.rotation_degrees,
+            "lungs_enabled": self.lungs_enabled,
+            "left_lung_radius_factors": list(self.left_lung_radius_factors),
+            "right_lung_radius_factors": list(self.right_lung_radius_factors),
+            "left_lung_center": list(self.left_lung_center),
+            "right_lung_center": list(self.right_lung_center),
         }
 
     @classmethod
@@ -179,6 +325,41 @@ class GeometryProfile:
             raise ValueError(
                 "geometry.boundary_radius_factors должен содержать числа"
             ) from exc
+        lung_factor_values: dict[str, tuple[float, ...]] = {}
+        for field_name in (
+            "left_lung_radius_factors",
+            "right_lung_radius_factors",
+        ):
+            raw_values = payload.get(field_name, [])
+            if not isinstance(raw_values, list):
+                raise ValueError(f"geometry.{field_name} должен быть массивом")
+            try:
+                lung_factor_values[field_name] = tuple(
+                    float(value) for value in raw_values
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"geometry.{field_name} должен содержать числа"
+                ) from exc
+        lungs_enabled = payload.get("lungs_enabled", True)
+        if not isinstance(lungs_enabled, bool):
+            raise ValueError("geometry.lungs_enabled должен быть boolean")
+        lung_centers: dict[str, tuple[float, float]] = {}
+        for field_name, default in (
+            ("left_lung_center", (0.28, 0.0)),
+            ("right_lung_center", (-0.28, 0.0)),
+        ):
+            raw_center = payload.get(field_name, default)
+            if not isinstance(raw_center, (list, tuple)) or len(raw_center) != 2:
+                raise ValueError(f"geometry.{field_name} должен содержать две координаты")
+            try:
+                lung_centers[field_name] = (
+                    float(raw_center[0]), float(raw_center[1])
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"geometry.{field_name} должен содержать числа"
+                ) from exc
         return cls(
             profile_id=text("profile_id"),
             display_name=text("display_name"),
@@ -202,6 +383,11 @@ class GeometryProfile:
                 None if payload.get("height_m") is None else number("height_m")
             ),
             rotation_degrees=float(payload.get("rotation_degrees", 0.0)),
+            lungs_enabled=lungs_enabled,
+            left_lung_radius_factors=lung_factor_values["left_lung_radius_factors"],
+            right_lung_radius_factors=lung_factor_values["right_lung_radius_factors"],
+            left_lung_center=lung_centers["left_lung_center"],
+            right_lung_center=lung_centers["right_lung_center"],
         )
 
     def cache_key(self) -> tuple:
@@ -219,6 +405,11 @@ class GeometryProfile:
             self.width_m,
             self.height_m,
             self.rotation_degrees,
+            self.lungs_enabled,
+            self.left_lung_radius_factors,
+            self.right_lung_radius_factors,
+            self.left_lung_center,
+            self.right_lung_center,
         )
 
 
@@ -230,6 +421,11 @@ def ellipse_profile(
     profile_id: str = "custom-ellipse-v1",
     display_name: str = "Пользовательский эллипс",
     sample_count: int = CONTOUR_SAMPLE_COUNT,
+    lungs_enabled: bool = True,
+    left_lung_radius_factors: tuple[float, ...] = (),
+    right_lung_radius_factors: tuple[float, ...] = (),
+    left_lung_center: tuple[float, float] = (0.28, 0.0),
+    right_lung_center: tuple[float, float] = (-0.28, 0.0),
 ) -> GeometryProfile:
     """Create a star-shaped radial representation of a rotated ellipse."""
 
@@ -259,6 +455,11 @@ def ellipse_profile(
         width_m=width_m,
         height_m=height_m,
         rotation_degrees=rotation_degrees,
+        lungs_enabled=lungs_enabled,
+        left_lung_radius_factors=left_lung_radius_factors,
+        right_lung_radius_factors=right_lung_radius_factors,
+        left_lung_center=left_lung_center,
+        right_lung_center=right_lung_center,
     )
 
 

@@ -1,8 +1,4 @@
-"""Right-side navigation panel.
-
-Screen list matches п.6 ТЗ exactly (10 forms).
-Supports runtime language switching via i18n.language_changed.
-"""
+"""Right-side navigation panel with runtime language switching."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PySide6.QtCore import Qt, Signal
@@ -11,13 +7,18 @@ from ..i18n import t, i18n
 from ..styles import C, FONT_NAV
 
 _NAV_FONT = FONT_NAV
-_NAV_PAD_V = 12
+# Twelve navigation targets must remain readable at the supported 768 px
+# minimum height.  The touch target stays at least 44 px; compact padding gives
+# two-line translations enough room without clipping their second line.
+_NAV_PAD_V = 6
 _NAV_PAD_H = 12
 NAV_ITEMS = [
     ("main",         "nav_main"),
+    ("express_monitoring", "nav_express_monitoring"),
     ("patient",      "nav_patient"),
     ("trends",       "nav_trends"),
     ("analysis",     "nav_analysis"),
+    ("peep",         "nav_peep"),
     ("eit_settings", "nav_eit_settings"),
     ("reports",      "nav_reports"),
     ("export",       "nav_export"),
@@ -28,7 +29,7 @@ NAV_ITEMS = [
 
 
 class NavPanel(QWidget):
-    """Vertical navigation panel with 10 buttons (one per TZ screen)."""
+    """Vertical navigation panel with one touch target per application screen."""
 
     screen_requested = Signal(str)   # emits screen key on click
 

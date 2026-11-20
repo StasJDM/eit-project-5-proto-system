@@ -31,6 +31,7 @@ from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounter, _VALUE_FONT
 from ..widgets.lung_viz import LungVizWidget
 from ..widgets.waveform_panel import WaveformPanel, RegionalWaveformPanel
+from ..widgets.chart_zoom import attach_chart_zoom
 from ..styles import C, WAVE_COLORS, configure_event_marker_btn, EVENT_MARKER_BTN_HEIGHT, TAB_BAR_FONT, TAB_BAR_SUB_FONT, FONT_BASE, FONT_SMALL, FONT_LABEL, FONT_VALUE, FONT_MEDICAL_VALUE, FONT_BTN_START, stop_button_style
 from ..i18n import t, i18n
 from ..ui_text import quality_text
@@ -75,8 +76,10 @@ class _WaveCvs(QWidget):
         self._data = np.zeros(DISPLAY_SAMPLES)
         self._col  = QColor(color)
         self._bg   = QColor(C["bg_wave"])
+        self.setMinimumHeight(46)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
+        attach_chart_zoom(self)
 
     def set_data(self, arr: np.ndarray):
         self._data = arr
@@ -984,6 +987,7 @@ class PathologyTab(QWidget):
         self._avg_canvas = FigureCanvas(_build_avg_figure())
         for canvas in (self._pca_canvas, self._avg_canvas):
             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            attach_chart_zoom(canvas)
         self._sub_stack.addWidget(self._pca_canvas)
         self._sub_stack.addWidget(self._avg_canvas)
 
@@ -1102,6 +1106,7 @@ class PathologyTab(QWidget):
         self._avg_canvas = FigureCanvas(_build_breathclf_templates_figure(visualization))
         for canvas in (self._pca_canvas, self._avg_canvas):
             canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            attach_chart_zoom(canvas)
         self._sub_stack.addWidget(self._pca_canvas)
         self._sub_stack.addWidget(self._avg_canvas)
         self._sub_stack.setCurrentIndex(selected)
@@ -1305,7 +1310,7 @@ class PeepTab(QWidget):
 
 
 class AnalysisScreen(QWidget):
-    """Экран АНАЛИЗ с живыми вкладками аэрации, дыхания и PEEP."""
+    """Экран АНАЛИЗ с вкладками аэрации и типа дыхания."""
 
     def __init__(
         self,
@@ -1342,16 +1347,14 @@ class AnalysisScreen(QWidget):
         self._btn_path = QPushButton(t("analysis_tab_pathology"))
         self._btn_glob = QPushButton(t("analysis_tab_global"))
         self._btn_reg  = QPushButton(t("analysis_tab_regional"))
-        self._btn_peep = QPushButton(t("analysis_tab_peep"))
 
-        for btn in (self._btn_path, self._btn_reg, self._btn_glob, self._btn_peep):
+        for btn in (self._btn_path, self._btn_reg, self._btn_glob):
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             tbl.addWidget(btn)
 
         self._btn_path.clicked.connect(lambda: self._switch_tab(0))
         self._btn_reg.clicked.connect(lambda: self._switch_tab(1))
         self._btn_glob.clicked.connect(lambda: self._switch_tab(2))
-        self._btn_peep.clicked.connect(lambda: self._switch_tab(3))
 
         root.addWidget(self._tab_bar)
 
@@ -1364,7 +1367,6 @@ class AnalysisScreen(QWidget):
         self._reg_tab = RegionalTab(
             roi_count=(engineering_settings.current.roi_count if engineering_settings else 8)
         )
-        self._peep_tab = PeepTab()
         if engineering_settings is not None:
             self._unsubscribe_engineering = engineering_settings.subscribe(
                 self._apply_engineering_settings
@@ -1377,7 +1379,6 @@ class AnalysisScreen(QWidget):
         self._stack.addWidget(self._path_tab)
         self._stack.addWidget(self._reg_tab)
         self._stack.addWidget(self._global_tab)
-        self._stack.addWidget(self._peep_tab)
         if eit_settings is not None:
             self._apply_eit_settings(eit_settings.current)
         if engineering_settings is not None:
@@ -1402,14 +1403,14 @@ class AnalysisScreen(QWidget):
     # ── Вспомогательные ───────────────────────────────────────────────────────
 
     def _all_tabs(self):
-        return [self._path_tab, self._global_tab, self._reg_tab, self._peep_tab]
+        return [self._path_tab, self._global_tab, self._reg_tab]
 
     def _switch_tab(self, idx: int):
         self._stack.setCurrentIndex(idx)
-        styles = [_TAB_IDLE_STYLE] * 4
+        styles = [_TAB_IDLE_STYLE] * 3
         styles[idx] = _TAB_ACTIVE_STYLE
         for btn, style in zip(
-            (self._btn_path, self._btn_reg, self._btn_glob, self._btn_peep), styles
+            (self._btn_path, self._btn_reg, self._btn_glob), styles
         ):
             btn.setStyleSheet(style)
 
@@ -1419,18 +1420,29 @@ class AnalysisScreen(QWidget):
 
     def _apply_engineering_settings(self, settings) -> None:
         self._reg_tab.set_roi_count(settings.roi_count)
+        self._reg_tab._waves.set_fill_enabled(settings.waveform_fill_enabled)
+        self._global_tab._waves.set_fill_enabled(settings.waveform_fill_enabled)
         self._display_window_sec = float(settings.graph_display_period_seconds)
+        metric_visible = settings.is_aeration_metric_visible
+        for panel in (self._global_tab._left, self._reg_tab):
+            panel.bx_t.setVisible(metric_visible("total_percent"))
+            panel.bx_r.setVisible(metric_visible("right_percent"))
+            panel.bx_l.setVisible(metric_visible("left_percent"))
+            panel.bx_lr.setVisible(metric_visible("right_left_ratio"))
+            panel.bx_vd.setVisible(metric_visible("ventral_dorsal_ratio"))
+        self._global_tab._left.bx_rr.setVisible(metric_visible("rr_bpm"))
+        self._global_tab._waves.set_aeration_metric_visibility(
+            settings.hidden_aeration_metrics,
+            respiratory_rate_visible=True,
+        )
+        self._reg_tab._waves.set_aeration_metric_visibility(
+            settings.hidden_aeration_metrics
+        )
         active_profile = getattr(
             self._monitoring, "section_profile", settings.section_profile
         )
         for widget in self.findChildren(LungVizWidget):
             widget.set_section_profile(active_profile)
-        self.set_peep_tab_visible(settings.is_element_visible("analysis.peep_tab"))
-
-    def set_peep_tab_visible(self, visible: bool) -> None:
-        self._btn_peep.setVisible(visible)
-        if not visible and self._stack.currentWidget() is self._peep_tab:
-            self._switch_tab(2)
 
     def _apply_eit_settings(self, settings) -> None:
         for widget in self.findChildren(LungVizWidget):
@@ -1490,7 +1502,5 @@ class AnalysisScreen(QWidget):
         self._btn_path.setText(t("analysis_tab_pathology"))
         self._btn_glob.setText(t("analysis_tab_global"))
         self._btn_reg.setText(t("analysis_tab_regional"))
-        self._btn_peep.setText(t("analysis_tab_peep"))
         if hasattr(self._path_tab, "retranslate"):
             self._path_tab.retranslate()
-        self._peep_tab.retranslate()

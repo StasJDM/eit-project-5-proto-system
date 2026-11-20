@@ -12,8 +12,9 @@ def draw_filled_waveform(
     baseline_y: float,
     line_width: float = 1.5,
     fill_alpha: int = 55,
+    fill_enabled: bool = True,
 ) -> None:
-    """Draw a waveform line with semi-transparent fill down to *baseline_y*."""
+    """Draw a waveform line and optionally fill down to *baseline_y*."""
     if len(xs) < 2:
         return
 
@@ -22,16 +23,17 @@ def draw_filled_waveform(
     for x, y in zip(xs[1:], ys[1:]):
         line.lineTo(x, y)
 
-    fill = QPainterPath(line)
-    fill.lineTo(xs[-1], baseline_y)
-    fill.lineTo(xs[0], baseline_y)
-    fill.closeSubpath()
+    if fill_enabled:
+        fill = QPainterPath(line)
+        fill.lineTo(xs[-1], baseline_y)
+        fill.lineTo(xs[0], baseline_y)
+        fill.closeSubpath()
 
-    fc = QColor(color)
-    fc.setAlpha(fill_alpha)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QBrush(fc))
-    painter.drawPath(fill)
+        fc = QColor(color)
+        fc.setAlpha(fill_alpha)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(fc))
+        painter.drawPath(fill)
 
     pen = QPen(color, line_width)
     pen.setCapStyle(Qt.RoundCap)

@@ -23,15 +23,20 @@ from .application import (
 )
 from .domain import StudyStatus
 from .i18n import i18n, t
-from .styles import C, start_button_style, stop_button_style
+from .styles import (
+    C, DEFAULT_APPLICATION_BACKGROUND_COLOR, start_button_style,
+    stop_button_style,
+)
 from .styles import stylesheet
 from .session_timers import SessionTimers, fmt_duration
 from .widgets.header_bar import HeaderBar
 from .widgets.nav_panel import NavPanel
 
 from .screens.main_screen       import MainScreen
+from .screens.express_monitoring_screen import ExpressMonitoringScreen
 from .screens.patient_screen    import PatientScreen
 from .screens.analysis_screen   import AnalysisScreen
+from .screens.peep_screen       import PeepScreen
 from .screens.trends_screen     import TrendsScreen
 from .screens.eit_settings_screen import EITSettingsScreen
 from .screens.service_info_screen import ServiceInfoScreen
@@ -121,6 +126,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(t("app_title"))
         self.setMinimumSize(1280, 768)
         self.setStyleSheet(stylesheet())
+        self._application_background_color = DEFAULT_APPLICATION_BACKGROUND_COLOR
 
         SessionTimers.instance(self).bind(self._container.session_clock)
 
@@ -183,6 +189,14 @@ class MainWindow(QMainWindow):
             ),
         )
         self._register(
+            "express_monitoring",
+            ExpressMonitoringScreen(
+                self._container.monitoring,
+                engineering_settings=self._container.engineering_settings,
+                eit_settings=self._container.eit_settings,
+            ),
+        )
+        self._register(
             "patient",
             PatientScreen(
                 self._container.patient_service,
@@ -200,6 +214,13 @@ class MainWindow(QMainWindow):
                 classification_service=self._container.breathing_classification,
                 engineering_settings=self._container.engineering_settings,
                 eit_settings=self._container.eit_settings,
+            ),
+        )
+        self._register(
+            "peep",
+            PeepScreen(
+                self._container.monitoring,
+                engineering_settings=self._container.engineering_settings,
             ),
         )
         self._register(
@@ -310,6 +331,7 @@ class MainWindow(QMainWindow):
             self._nav.set_active(key)
 
     def _apply_interface_settings(self, settings: EngineeringSettings) -> None:
+        self._apply_background_color(settings.application_background_color)
         self._visible_tabs = set(settings.visible_tabs)
         for key in self._screens:
             self._nav.set_item_visible(key, key in self._visible_tabs)
@@ -323,6 +345,16 @@ class MainWindow(QMainWindow):
         )
         if current_key is not None and current_key not in self._visible_tabs:
             self._switch_screen("main")
+
+    def _apply_background_color(self, color: str) -> None:
+        """Apply the persisted workspace background without rebuilding screens."""
+        previous = self._application_background_color
+        if color == previous:
+            return
+        self.setStyleSheet(stylesheet(color))
+        for screen in self._screens.values():
+            screen.setStyleSheet(f"background-color:{color};")
+        self._application_background_color = color
 
     @staticmethod
     def _set_widgets_visible(visible: bool, *widgets) -> None:
@@ -355,19 +387,39 @@ class MainWindow(QMainWindow):
             visible("analysis.tabs"),
             analysis._tab_bar,
         )
-        analysis.set_peep_tab_visible(visible("analysis.peep_tab"))
         set_visible(
             visible("analysis.lung_map"),
             analysis._global_tab._left.lung_viz, analysis._reg_tab.lung_viz,
         )
         set_visible(
-            visible("analysis.metrics"),
-            analysis._global_tab._left.bx_t, analysis._global_tab._left.bx_r,
-            analysis._global_tab._left.bx_l, analysis._global_tab._left.bx_lr,
-            analysis._global_tab._left.bx_vd, analysis._global_tab._left.bx_rr,
-            analysis._reg_tab.bx_t, analysis._reg_tab.bx_r,
-            analysis._reg_tab.bx_l, analysis._reg_tab.bx_lr,
-            analysis._reg_tab.bx_vd,
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("total_percent"),
+            analysis._global_tab._left.bx_t, analysis._reg_tab.bx_t,
+        )
+        set_visible(
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("right_percent"),
+            analysis._global_tab._left.bx_r, analysis._reg_tab.bx_r,
+        )
+        set_visible(
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("left_percent"),
+            analysis._global_tab._left.bx_l, analysis._reg_tab.bx_l,
+        )
+        set_visible(
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("right_left_ratio"),
+            analysis._global_tab._left.bx_lr, analysis._reg_tab.bx_lr,
+        )
+        set_visible(
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("ventral_dorsal_ratio"),
+            analysis._global_tab._left.bx_vd, analysis._reg_tab.bx_vd,
+        )
+        set_visible(
+            visible("analysis.metrics")
+            and settings.is_aeration_metric_visible("rr_bpm"),
+            analysis._global_tab._left.bx_rr,
         )
         set_visible(
             visible("analysis.waveforms"),
@@ -387,8 +439,17 @@ class MainWindow(QMainWindow):
             analysis._global_tab._waves.btn_event,
             analysis._reg_tab._bar,
             analysis._path_tab._bar,
-            analysis._peep_tab._bar,
         )
+
+        peep = self._screens["peep"]
+        set_visible(visible("peep.map"), peep._tab.map_widget)
+        set_visible(
+            visible("peep.metrics"),
+            peep._tab.bx_fls, peep._tab.bx_dss, peep._tab.bx_nss,
+            peep._tab.bx_cov_v, peep._tab.bx_cov_h,
+            peep._tab._hov_label, peep._tab._cov_label, peep._tab._details,
+        )
+        set_visible(visible("peep.controls"), peep._tab._bar)
 
         eit = self._screens["eit_settings"]
         set_visible(
@@ -463,11 +524,13 @@ class MainWindow(QMainWindow):
         main = self._screens["main"]
         patient = self._screens["patient"]
         analysis = self._screens["analysis"]
+        peep = self._screens["peep"]
         trends = self._screens["trends"]
         candidates = [
             main.left.btn_start,
             patient._btn_start,
             *(tab.btn_start for tab in analysis._all_tabs()),
+            peep.btn_start,
             trends.bottom.btn_start,
             self._screens["eit_settings"]._btn_start,
             self._screens["export"]._btn_start,
@@ -481,10 +544,12 @@ class MainWindow(QMainWindow):
     def _wire_event_marker_controls(self):
         main = self._screens["main"]
         analysis = self._screens["analysis"]
+        peep = self._screens["peep"]
         trends = self._screens["trends"]
         candidates = [
             main.waves.btn_event,
             *analysis.event_buttons,
+            *peep.event_buttons,
             trends.bottom.btn_marker,
         ]
         self._marker_buttons = [button for button in candidates if button is not None]
@@ -501,20 +566,35 @@ class MainWindow(QMainWindow):
         ):
             QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
             return
+        # Persist the exact button-press moment before the operator chooses a type.
+        # "Other" is the safe initial classification and remains valid if the
+        # chooser is closed without a selection.
+        try:
+            marker = service.create("operator_note", "", service.default_author)
+        except EventMarkerError:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        service_screen = self._screens.get("service")
+        if isinstance(service_screen, ServiceInfoScreen):
+            service_screen.refresh()
         dialog = EventMarkerDialog(
-            service.current_position_seconds,
+            marker.position_seconds,
             service.default_author,
+            correction=marker,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.values()
+        if values.event_type == marker.event_type:
+            return
         try:
-            service.create(values.event_type, values.description, values.author)
+            service.correct(
+                marker.id, "", values.author, event_type=values.event_type,
+            )
         except EventMarkerError:
             QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
             return
-        service_screen = self._screens.get("service")
         if isinstance(service_screen, ServiceInfoScreen):
             service_screen.refresh()
 

@@ -14,7 +14,7 @@ os.environ.setdefault("EIT_EXPORT_DIR", "/tmp/eit-test-exports")
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QDialogButtonBox, QLabel, QLineEdit, QMessageBox,
+    QApplication, QLabel, QLineEdit, QMessageBox, QPushButton,
 )
 from PySide6.QtTest import QTest
 
@@ -24,9 +24,15 @@ from app.application import ALL_INTERFACE_ELEMENTS, EngineeringSettings, Monitor
 from app.i18n import LANGUAGES, STRINGS, i18n
 from app.screens.eit_settings_screen import EITSettingsScreen
 from app.screens.event_marker_dialog import EventMarkerDialog
-from app.screens.main_screen import LeftPanel
+from app.screens.main_screen import (
+    MAIN_LEFT_PANEL_MIN_WIDTH,
+    MAIN_LEFT_PANEL_WIDTH,
+    MAIN_LUNG_VIZ_EXPANDED_HEIGHT,
+    MAIN_LUNG_VIZ_MIN_HEIGHT,
+    LeftPanel,
+)
 from app.widgets.waveform_panel import WaveformPanel
-from app.styles import FONT_BTN_START, FONT_LABEL, FONT_MEDICAL_VALUE, FONT_VALUE
+from app.styles import C, FONT_BTN_START, FONT_LABEL, FONT_MEDICAL_VALUE, FONT_VALUE
 from app.ui_text import quality_reason_text, study_conclusion_text, study_status_text
 
 
@@ -44,10 +50,12 @@ class UiContractTest(unittest.TestCase):
                 set(window._screens),
                 {
                     "main",
+                    "express_monitoring",
                     "patient",
                     "eit_settings",
                     "trends",
                     "analysis",
+                    "peep",
                     "reports",
                     "export",
                     "system",
@@ -55,6 +63,42 @@ class UiContractTest(unittest.TestCase):
                     "debug",
                 },
             )
+            nav_order = [key for key, _label in window._nav._item_keys]
+            self.assertEqual(
+                nav_order.index("express_monitoring"), nav_order.index("main") + 1
+            )
+            self.assertEqual(
+                nav_order.index("peep"), nav_order.index("analysis") + 1
+            )
+            for button in window._nav._buttons.values():
+                self.assertGreaterEqual(button.minimumHeight(), 44)
+                self.assertIn("padding: 6px 12px", button.styleSheet())
+        finally:
+            window.close()
+
+    def test_express_monitoring_is_large_live_view_with_engineering_visibility(self):
+        window = MainWindow()
+        try:
+            express = window._screens["express_monitoring"]
+            self.assertGreaterEqual(express.lung_viz.minimumWidth(), 360)
+            self.assertIn("font-size:46px", express.metric_rr.value.styleSheet())
+            self.assertFalse(express.plethysmogram.row_global.canvas.isHidden())
+
+            current = window._container.engineering_settings.current
+            window._container.engineering_settings.save(replace(
+                current,
+                visible_elements=tuple(
+                    element for element in current.visible_elements
+                    if element not in {
+                        "express_monitoring.lung_map",
+                        "express_monitoring.metrics",
+                    }
+                ),
+            ))
+            self.app.processEvents()
+            self.assertTrue(express._lung_panel.isHidden())
+            self.assertTrue(express._metrics_panel.isHidden())
+            self.assertFalse(express._plethysmogram_panel.isHidden())
         finally:
             window.close()
 
@@ -83,6 +127,60 @@ class UiContractTest(unittest.TestCase):
                 left_layout.indexOf(window.header),
             )
             self.assertFalse(window._nav._item_frames["main"].property("active"))
+        finally:
+            window.close()
+
+    def test_main_lung_visualization_fills_window_and_restores(self):
+        window = MainWindow()
+        try:
+            window.show()
+            self.app.processEvents()
+            main = window._screens["main"]
+            visualization = main.left.lung_viz
+            source_parent = visualization.parentWidget()
+            source_layout = source_parent.layout()
+            source_index = source_layout.indexOf(visualization)
+
+            QTest.mouseClick(visualization, Qt.LeftButton)
+            self.app.processEvents()
+
+            dialog = main._lung_fullscreen_dialog
+            self.assertIsNotNone(dialog)
+            self.assertFalse(dialog.isFullScreen())
+            self.assertEqual(dialog.geometry(), window.geometry())
+            self.assertIs(visualization.parentWidget(), dialog)
+            self.assertGreaterEqual(dialog.close_button.width(), 48)
+            self.assertEqual(dialog.close_button.text(), "×")
+
+            dialog.close_button.click()
+            self.app.processEvents()
+
+            self.assertIsNone(main._lung_fullscreen_dialog)
+            self.assertIs(visualization.parentWidget(), source_parent)
+            self.assertEqual(source_layout.indexOf(visualization), source_index)
+        finally:
+            window.close()
+
+    def test_engineering_background_color_applies_without_restart(self):
+        window = MainWindow()
+        try:
+            current = window._container.engineering_settings.current
+            window._container.engineering_settings.save(replace(
+                current,
+                application_background_color="#123456",
+            ))
+            self.app.processEvents()
+
+            self.assertEqual(window._application_background_color, "#123456")
+            self.assertIn("background-color: #123456", window.styleSheet())
+            self.assertIn(
+                "background-color:#123456",
+                window._screens["patient"].styleSheet(),
+            )
+            self.assertEqual(
+                window._container.engineering_settings.current.application_background_color,
+                "#123456",
+            )
         finally:
             window.close()
 
@@ -163,12 +261,111 @@ class UiContractTest(unittest.TestCase):
             self.assertEqual(tab.table.rowCount(), len(tab.metrics))
             self.assertEqual(tab.table.columnCount(), 3)
             self.assertEqual(tab.table.horizontalHeaderItem(1).text(), "15с")
-            self.assertEqual(tab.table.item(0, 0).text(), "0.125")
+            self.assertEqual(tab.table.item(0, 0).text(), "0")
+            self.assertEqual(tab.table.item(0, 0).data(Qt.UserRole), 0.125)
             self.assertEqual(tab.table.item(0, 1).text(), "—")
             self.assertEqual(tab.table.item(0, 2).data(Qt.UserRole), 2.5)
+            self.assertGreater(
+                tab.table.horizontalHeader().font().pixelSize(),
+                tab.table.font().pixelSize(),
+            )
+            self.assertGreater(
+                tab.table.verticalHeader().font().pixelSize(),
+                tab.table.font().pixelSize(),
+            )
+            self.assertGreaterEqual(tab.table.verticalHeader().minimumWidth(), 190)
+            self.assertGreaterEqual(tab.table.horizontalHeader().minimumHeight(), 48)
+            self.assertEqual(tab.table_panel.objectName(), "trend_table_panel")
+            for color_key in ("bg_table", "bg_table_alt", "bg_table_header"):
+                self.assertIn(C[color_key], tab.table.styleSheet())
+            self.assertIn(C["bg_table"], tab.table_panel.styleSheet())
+            rgb_sum = lambda color: sum(
+                int(color[index:index + 2], 16) for index in (1, 3, 5)
+            )
+            self.assertGreater(rgb_sum(C["bg_table"]), rgb_sum(C["bg_main"]))
             np.testing.assert_allclose(
                 tab.wave._data[0], values[tab.metrics[0][1]], equal_nan=True
             )
+        finally:
+            window.close()
+
+    def test_trend_table_arrows_pause_and_resume_latest_column_following(self):
+        window = MainWindow()
+        try:
+            trends = window._screens["trends"]
+            trends._timer.stop()
+            window.resize(1280, 800)
+            window._switch_screen("trends")
+            window.show()
+            self.app.processEvents()
+
+            tab = trends.tab_global
+            times = np.arange(0.0, 15.0 * 40, 15.0)
+            values = {
+                code: np.arange(times.size, dtype=float) + index
+                for index, (_label, code, _unit) in enumerate(tab.metrics)
+            }
+            tab.refresh({
+                "metrics": values,
+                "time": times,
+                "axis_range": (0.0, float(times[-1])),
+            })
+            QTest.qWait(20)
+            self.app.processEvents()
+
+            scrollbar = tab.table.horizontalScrollBar()
+            self.assertGreater(scrollbar.maximum(), 0)
+            self.assertEqual(scrollbar.value(), scrollbar.maximum())
+            self.assertTrue(tab.table.follow_latest)
+            self.assertGreaterEqual(tab.table_previous_button.width(), 64)
+            self.assertGreaterEqual(tab.table_previous_button.height(), 48)
+            self.assertTrue(tab.table_previous_button.isEnabled())
+            self.assertFalse(tab.table_next_button.isEnabled())
+
+            QTest.mouseClick(tab.table_previous_button, Qt.LeftButton)
+            self.app.processEvents()
+            history_position = scrollbar.value()
+            self.assertLess(history_position, scrollbar.maximum())
+            self.assertFalse(tab.table.follow_latest)
+            self.assertEqual(tab.table_follow_label.text(), "Просмотр истории")
+
+            extended_times = np.append(times, times[-1] + 15.0)
+            extended_values = {
+                code: np.append(series, series[-1] + 1.0)
+                for code, series in values.items()
+            }
+            tab.refresh({
+                "metrics": extended_values,
+                "time": extended_times,
+                "axis_range": (0.0, float(extended_times[-1])),
+            })
+            QTest.qWait(20)
+            self.app.processEvents()
+            self.assertEqual(scrollbar.value(), history_position)
+            self.assertLess(scrollbar.value(), scrollbar.maximum())
+
+            for _ in range(tab.table.columnCount() + 1):
+                if not tab.table_next_button.isEnabled():
+                    break
+                QTest.mouseClick(tab.table_next_button, Qt.LeftButton)
+                self.app.processEvents()
+            self.assertEqual(scrollbar.value(), scrollbar.maximum())
+            self.assertTrue(tab.table.follow_latest)
+            self.assertEqual(tab.table_follow_label.text(), "Последние данные")
+
+            newest_times = np.append(extended_times, extended_times[-1] + 15.0)
+            newest_values = {
+                code: np.append(series, series[-1] + 1.0)
+                for code, series in extended_values.items()
+            }
+            tab.refresh({
+                "metrics": newest_values,
+                "time": newest_times,
+                "axis_range": (0.0, float(newest_times[-1])),
+            })
+            QTest.qWait(20)
+            self.app.processEvents()
+            self.assertEqual(scrollbar.value(), scrollbar.maximum())
         finally:
             window.close()
 
@@ -179,12 +376,13 @@ class UiContractTest(unittest.TestCase):
             hidden = {
                 "main.rl",
                 "main.mvi",
+                "main.respiratory_rate",
                 "main.velocity",
                 "main.global_waveform",
                 "patient.history",
                 "trends.period",
                 "analysis.lung_map",
-                "analysis.peep_tab",
+                "peep.map",
                 "eit_settings.visualization",
                 "reports.preview",
                 "export.summary",
@@ -205,12 +403,14 @@ class UiContractTest(unittest.TestCase):
 
             self.assertTrue(window._screens["main"].left.box_lr.isHidden())
             self.assertTrue(window._screens["main"].left.box_mvi.isHidden())
+            self.assertTrue(window._screens["main"].left.box_rr.isHidden())
+            self.assertTrue(window._screens["main"].waves.row_global.rr_box.isHidden())
             self.assertTrue(window._screens["main"].waves.row_global.isHidden())
             self.assertTrue(window._screens["main"].waves.row_velocity.isHidden())
             self.assertTrue(window._screens["patient"]._box_history.isHidden())
             self.assertTrue(window._screens["trends"]._selector.isHidden())
             self.assertTrue(window._screens["analysis"]._reg_tab.lung_viz.isHidden())
-            self.assertTrue(window._screens["analysis"]._btn_peep.isHidden())
+            self.assertTrue(window._screens["peep"]._tab.map_widget.isHidden())
             self.assertTrue(window._screens["eit_settings"]._grp_color.isHidden())
             self.assertTrue(window._screens["reports"]._box_preview.isHidden())
             self.assertTrue(window._screens["export"]._privacy.isHidden())
@@ -252,6 +452,97 @@ class UiContractTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_engineering_aeration_parameters_are_hidden_everywhere(self):
+        window = MainWindow()
+        try:
+            service = window._container.engineering_settings
+            hidden_trends = (
+                "tvi_au",
+                "mvi_au_per_min",
+                "roi_1_percent",
+            )
+            hidden_globally = (
+                "total_percent",
+                "eeli_au",
+                "right_left_ratio",
+            )
+            engineering = window._screens["system"]
+            for code in hidden_trends:
+                engineering._trend_visibility_checks[code].setChecked(False)
+            for code in hidden_globally:
+                engineering._aeration_visibility_checks[code].setChecked(False)
+            engineering._engineering_apply.click()
+            self.app.processEvents()
+            self.assertEqual(
+                service.current.hidden_trend_metrics, hidden_trends
+            )
+            self.assertEqual(
+                service.current.hidden_aeration_metrics, hidden_globally
+            )
+
+            main = window._screens["main"]
+            self.assertTrue(main.left.box_t.isHidden())
+            self.assertTrue(main.left.box_eeli.isHidden())
+            self.assertFalse(main.left.box_tvi.isHidden())
+            self.assertFalse(main.left.box_mvi.isHidden())
+            self.assertTrue(main.left.box_lr.isHidden())
+            self.assertTrue(main.waves.row_global.pct_box.isHidden())
+            self.assertFalse(main.waves.rows_r[0].pct_box.isHidden())
+            self.assertFalse(main.left.box_eili.isHidden())
+
+            express = window._screens["express_monitoring"]
+            self.assertTrue(express.metric_eeli.isHidden())
+            self.assertFalse(express.metric_tvi.isHidden())
+            self.assertFalse(express.metric_mvi.isHidden())
+            self.assertTrue(express.metric_rl.isHidden())
+            self.assertFalse(express.metric_eili.isHidden())
+
+            analysis = window._screens["analysis"]
+            self.assertTrue(analysis._global_tab._left.bx_t.isHidden())
+            self.assertTrue(analysis._global_tab._left.bx_lr.isHidden())
+            self.assertTrue(analysis._reg_tab.bx_t.isHidden())
+            self.assertTrue(analysis._reg_tab.bx_lr.isHidden())
+            self.assertFalse(
+                analysis._reg_tab._waves._col_r.rois[0].pct_box.isHidden()
+            )
+
+            trends = window._screens["trends"]
+            for tab in trends._trend_tabs():
+                codes = {code for _label, code, _unit in tab.metrics}
+                self.assertTrue(
+                    codes.isdisjoint(hidden_trends + hidden_globally)
+                )
+            self.assertEqual(trends.tab_global.table.rowCount(), 4)
+            self.assertEqual(trends.tab_regional.table.rowCount(), 17)
+
+            all_global_codes = tuple(
+                code for _label, code, _unit in trends.tab_global.metrics
+            )
+            service.save(replace(
+                service.current,
+                hidden_trend_metrics=hidden_trends + all_global_codes,
+            ))
+            self.app.processEvents()
+            self.assertEqual(trends.tab_global.metrics, ())
+            self.assertFalse(trends.tab_global.empty_label.isHidden())
+
+            service.save(replace(
+                service.current,
+                hidden_trend_metrics=(),
+                hidden_aeration_metrics=(),
+            ))
+            self.app.processEvents()
+            self.assertFalse(main.left.box_tvi.isHidden())
+            self.assertFalse(express.metric_tvi.isHidden())
+            self.assertFalse(analysis._global_tab._left.bx_lr.isHidden())
+            self.assertFalse(main.waves.rows_r[0].pct_box.isHidden())
+            self.assertIn(
+                "tvi_au",
+                {code for _label, code, _unit in trends.tab_global.metrics},
+            )
+        finally:
+            window.close()
+
     def test_velocity_and_global_aeration_charts_are_vertically_aligned(self):
         waves = WaveformPanel(show_velocity=True, roi_count=8)
         try:
@@ -286,7 +577,7 @@ class UiContractTest(unittest.TestCase):
             for box in (
                 panel.box_t, panel.box_r, panel.box_l, panel.box_lr,
                 panel.box_vd, panel.box_tvi, panel.box_eeli, panel.box_eili,
-                panel.box_mvi,
+                panel.box_mvi, panel.box_rr,
             ):
                 self.assertEqual(box._lbl_val.text(), "—")
                 self.assertEqual(box.toolTip(), "")
@@ -308,6 +599,39 @@ class UiContractTest(unittest.TestCase):
         finally:
             panel.close()
 
+    def test_main_left_panel_width_and_lung_visualization_are_balanced(self):
+        panel = LeftPanel()
+        window = None
+        try:
+            self.assertEqual(MAIN_LEFT_PANEL_WIDTH, 540)
+            self.assertLess(MAIN_LEFT_PANEL_WIDTH, 570)
+            self.assertEqual(panel.sizeHint().width(), MAIN_LEFT_PANEL_WIDTH)
+            self.assertEqual(panel.minimumWidth(), MAIN_LEFT_PANEL_MIN_WIDTH)
+            self.assertEqual(panel.maximumWidth(), MAIN_LEFT_PANEL_WIDTH)
+
+            window = MainWindow()
+            window.resize(1512, 982)
+            window.show()
+            self.app.processEvents()
+            main = window._screens["main"]
+            self.assertEqual(main.left.width(), MAIN_LEFT_PANEL_WIDTH)
+            self.assertEqual(
+                main.left.lung_viz.height(),
+                MAIN_LUNG_VIZ_EXPANDED_HEIGHT,
+            )
+            self.assertFalse(main.left.geometry().intersects(main.waves.geometry()))
+
+            window.resize(1280, 800)
+            self.app.processEvents()
+            self.assertGreaterEqual(main.left.width(), MAIN_LEFT_PANEL_MIN_WIDTH)
+            self.assertLessEqual(main.left.width(), MAIN_LEFT_PANEL_WIDTH)
+            self.assertEqual(main.left.lung_viz.height(), MAIN_LUNG_VIZ_MIN_HEIGHT)
+            self.assertFalse(main.left.geometry().intersects(main.waves.geometry()))
+        finally:
+            panel.close()
+            if window is not None:
+                window.close()
+
     def test_main_screen_displays_impedance_minute_ventilation(self):
         panel = LeftPanel()
         try:
@@ -322,6 +646,19 @@ class UiContractTest(unittest.TestCase):
             self.assertNotIn("AU", " ".join(labels))
         finally:
             panel.close()
+
+    def test_main_screen_displays_respiratory_rate_with_numeric_parameters(self):
+        window = MainWindow()
+        try:
+            main = window._screens["main"]
+            main.left.update_params(MonitoringSnapshot(rr=15.0))
+
+            self.assertEqual(main.left.box_rr._lbl_val.text(), "15")
+            self.assertFalse(main.left.box_rr.isHidden())
+            self.assertTrue(main.waves.row_global.rr_box.isHidden())
+            self.assertTrue(main.waves.row_velocity.rr_box.isHidden())
+        finally:
+            window.close()
 
     def test_main_screen_start_button_keeps_explicit_green_style(self):
         panel = LeftPanel()
@@ -345,7 +682,7 @@ class UiContractTest(unittest.TestCase):
         finally:
             panel.close()
 
-    def test_main_timers_are_left_of_event_marker_with_original_typography(self):
+    def test_main_timers_are_single_line_left_of_event_marker(self):
         window = MainWindow()
         try:
             main = window._screens["main"]
@@ -358,9 +695,11 @@ class UiContractTest(unittest.TestCase):
                 bottom_layout.indexOf(main.waves.btn_event),
             )
             self.assertIn(
-                f"font-size:{FONT_LABEL + 6}px",
+                f"font-size:{FONT_LABEL + 2}px",
                 counters.cnt_eit._lbl.styleSheet(),
             )
+            self.assertFalse(counters.cnt_eit._lbl.wordWrap())
+            self.assertFalse(counters.cnt_es._lbl.wordWrap())
             self.assertIn(
                 f"font-size:{FONT_VALUE + 8}px",
                 counters.cnt_eit._val.styleSheet(),
@@ -656,7 +995,7 @@ class UiContractTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_event_marker_button_saves_without_description(self):
+    def test_event_marker_button_saves_immediately_and_type_button_closes_dialog(self):
         window = MainWindow()
         try:
             lifecycle = window._container.study_lifecycle
@@ -668,21 +1007,40 @@ class UiContractTest(unittest.TestCase):
             window._container.monitoring_controller.start()
             window._sync_study_controls()
 
+            marker_counts_while_open = []
+
             def submit_dialog():
                 dialog = next(
                     widget for widget in QApplication.topLevelWidgets()
                     if isinstance(widget, EventMarkerDialog)
                 )
-                buttons = dialog.findChild(QDialogButtonBox)
-                buttons.button(QDialogButtonBox.Save).click()
+                marker_counts_while_open.append(len(
+                    window._container.marker_service.list_for_current_study()
+                ))
+                self.assertFalse(dialog.findChildren(QLineEdit))
+                choices = {
+                    button.property("event_type"): button
+                    for button in dialog.findChildren(QPushButton)
+                }
+                self.assertEqual(
+                    set(choices),
+                    {"cough", "procedure", "position_change", "operator_note"},
+                )
+                self.assertTrue(all(button.minimumHeight() >= 100 for button in choices.values()))
+                choices["cough"].click()
 
             QTimer.singleShot(0, submit_dialog)
             window._screens["main"].waves.btn_event.click()
 
             markers = window._container.marker_service.list_for_current_study()
-            self.assertEqual(len(markers), 1)
+            self.assertEqual(marker_counts_while_open, [1])
+            self.assertEqual(len(markers), 2)
             self.assertEqual(markers[0].text, "")
             self.assertEqual(markers[0].author, "ui-doctor")
+            self.assertEqual(markers[0].event_type, "operator_note")
+            self.assertEqual(markers[1].event_type, "cough")
+            self.assertEqual(markers[1].corrects_event_id, markers[0].id)
+            self.assertEqual(markers[1].position_seconds, markers[0].position_seconds)
         finally:
             window.close()
 

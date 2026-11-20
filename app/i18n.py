@@ -39,6 +39,42 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "EIT — 患者监护仪",
         "vi": "EIT — Màn hình bệnh nhân",
     },
+    "chart_magnifier": {
+        "ru": "Увеличить график",
+        "en": "Magnify chart",
+        "zh": "放大图表",
+        "vi": "Phóng to biểu đồ",
+    },
+    "chart_zoom_title": {
+        "ru": "Увеличенный график",
+        "en": "Magnified chart",
+        "zh": "放大的图表",
+        "vi": "Biểu đồ phóng to",
+    },
+    "chart_zoom_in": {
+        "ru": "Увеличить масштаб",
+        "en": "Zoom in",
+        "zh": "放大",
+        "vi": "Phóng to",
+    },
+    "chart_zoom_out": {
+        "ru": "Уменьшить масштаб",
+        "en": "Zoom out",
+        "zh": "缩小",
+        "vi": "Thu nhỏ",
+    },
+    "chart_zoom_reset": {
+        "ru": "100%",
+        "en": "100%",
+        "zh": "100%",
+        "vi": "100%",
+    },
+    "chart_zoom_close": {
+        "ru": "Закрыть увеличенный график",
+        "en": "Close magnified chart",
+        "zh": "关闭放大的图表",
+        "vi": "Đóng biểu đồ phóng to",
+    },
 
     # ── Header bar ─────────────────────────────────────────────────────────
     "hdr_adult": {
@@ -246,6 +282,12 @@ STRINGS: dict[str, dict[str, str]] = {
     "marker_type_note": {
         "ru": "Заметка оператора", "en": "Operator note", "zh": "操作员备注", "vi": "Ghi chú người vận hành",
     },
+    "marker_type_other": {
+        "ru": "Иное", "en": "Other", "zh": "其他", "vi": "Khác",
+    },
+    "marker_chart_prefix": {
+        "ru": "С", "en": "E", "zh": "事", "vi": "S",
+    },
     "marker_unavailable": {
         "ru": "Маркер можно создать только для активного исследования.",
         "en": "A marker can only be created for an active study.",
@@ -266,6 +308,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "🏠  主\n窗口",
         "vi": "🏠  Cửa sổ\nchính",
     },
+    "nav_express_monitoring": {
+        "ru": "🫁  Экспресс\nмониторинг",
+        "en": "🫁  Express\nmonitoring",
+        "zh": "🫁  快速\n监测",
+        "vi": "🫁  Giám sát\nnhanh",
+    },
     "nav_patient": {
         "ru": "👤  Пациент",
         "en": "👤  Patient",
@@ -283,6 +331,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "🔬  Analysis",
         "zh": "🔬  分析",
         "vi": "🔬  Phân tích",
+    },
+    "nav_peep": {
+        "ru": "PEEP", "en": "PEEP", "zh": "PEEP", "vi": "PEEP",
     },
     "nav_eit_settings": {
         "ru": "⚙  Настройки\nЭИТ",
@@ -346,6 +397,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "绝对图显示任意单位的相对电导率。点击图像可切换到 ΔZ。",
         "vi": "Bản đồ tuyệt đối hiển thị độ dẫn điện tương đối theo đơn vị quy ước. Nhấp để chuyển sang ΔZ.",
     },
+    "lung_fullscreen_open_tooltip": {
+        "ru": "Нажмите, чтобы развернуть на всё окно",
+        "en": "Tap to expand to the whole window",
+        "zh": "点击展开至整个窗口",
+        "vi": "Chạm để mở rộng ra toàn cửa sổ",
+    },
+    "lung_fullscreen_close": {
+        "ru": "Закрыть развёрнутый просмотр",
+        "en": "Close expanded view",
+        "zh": "关闭展开视图",
+        "vi": "Đóng chế độ xem mở rộng",
+    },
     "lung_absolute_conductivity_map": {
         "ru": "Проводимость σ (отн., а.е.)",
         "en": "Conductivity σ (relative, a.u.)",
@@ -381,6 +444,36 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "wave_rr_short": {
         "ru": "ЧД", "en": "RR", "zh": "呼吸率", "vi": "NT",
+    },
+    "express_metric_rr": {
+        "ru": "Частота дыхания", "en": "Respiratory rate",
+        "zh": "呼吸频率", "vi": "Tần số thở",
+    },
+    "express_metric_tvi": {
+        "ru": "Приливная вентиляция TVi", "en": "Tidal ventilation TVi",
+        "zh": "潮气通气量 TVi", "vi": "Thông khí khí lưu thông TVi",
+    },
+    "express_metric_mvi": {
+        "ru": "Минутная вентиляция MVi", "en": "Minute ventilation MVi",
+        "zh": "分钟通气量 MVi", "vi": "Thông khí phút MVi",
+    },
+    "express_metric_eeli": {
+        "ru": "Конец выдоха EELI", "en": "End-expiratory EELI",
+        "zh": "呼气末 EELI", "vi": "Cuối thì thở ra EELI",
+    },
+    "express_metric_eili": {
+        "ru": "Конец вдоха EILI", "en": "End-inspiratory EILI",
+        "zh": "吸气末 EILI", "vi": "Cuối thì hít vào EILI",
+    },
+    "express_metric_rl": {
+        "ru": "Соотношение R/L", "en": "R/L ratio",
+        "zh": "R/L 比值", "vi": "Tỷ lệ R/L",
+    },
+    "express_unit_au": {
+        "ru": "а.е.", "en": "a.u.", "zh": "任意单位", "vi": "đ.v.q.ư.",
+    },
+    "express_unit_au_min": {
+        "ru": "а.е./мин", "en": "a.u./min", "zh": "任意单位/分", "vi": "đ.v.q.ư./phút",
     },
     "wave_event_marker": {
         "ru": "⚑  МАРКЕР СОБЫТИЙ",
@@ -1038,6 +1131,36 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "表格",
         "vi": "Bảng",
     },
+    "trends_no_visible_metrics": {
+        "ru": "Все параметры этой вкладки скрыты в инженерном меню.",
+        "en": "All parameters on this tab are hidden in Engineering mode.",
+        "zh": "此选项卡的所有参数均已在工程模式中隐藏。",
+        "vi": "Tất cả thông số trên thẻ này đã bị ẩn trong chế độ kỹ thuật.",
+    },
+    "trends_previous_columns": {
+        "ru": "Предыдущие столбцы",
+        "en": "Previous columns",
+        "zh": "上一组列",
+        "vi": "Các cột trước",
+    },
+    "trends_next_columns": {
+        "ru": "Следующие столбцы",
+        "en": "Next columns",
+        "zh": "下一组列",
+        "vi": "Các cột tiếp theo",
+    },
+    "trends_following_latest": {
+        "ru": "Последние данные",
+        "en": "Latest data",
+        "zh": "最新数据",
+        "vi": "Dữ liệu mới nhất",
+    },
+    "trends_history_view": {
+        "ru": "Просмотр истории",
+        "en": "History view",
+        "zh": "历史视图",
+        "vi": "Xem lịch sử",
+    },
     "trends_time_hours": {
         "ru": "Время, часы",
         "en": "Time, hours",
@@ -1144,6 +1267,136 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_engineering_tab_section": {
         "ru": "Сечение", "en": "Cross-section", "zh": "截面", "vi": "Mặt cắt",
     },
+    "sys_engineering_tab_appearance": {
+        "ru": "Внешний вид", "en": "Appearance", "zh": "外观", "vi": "Giao diện",
+    },
+    "sys_engineering_tab_reference": {
+        "ru": "Справка", "en": "Reference", "zh": "参考", "vi": "Tham khảo",
+    },
+    "sys_reference_title": {
+        "ru": "Обозначения и сокращения", "en": "Symbols and abbreviations",
+        "zh": "符号和缩写", "vi": "Ký hiệu và chữ viết tắt",
+    },
+    "sys_reference_hint": {
+        "ru": "Краткая расшифровка обозначений, используемых на экранах мониторинга, анализа и трендов.",
+        "en": "A quick reference for symbols used on monitoring, analysis, and trend screens.",
+        "zh": "监测、分析和趋势界面中所用符号的简要说明。",
+        "vi": "Giải thích nhanh các ký hiệu trên màn hình theo dõi, phân tích và xu hướng.",
+    },
+    "sys_reference_event": {
+        "ru": "Событие мониторинга. Число после буквы — порядковый номер маркера в исследовании.",
+        "en": "Monitoring event. The following number is the marker sequence within the study.",
+        "zh": "监测事件。字母后的数字表示该检查中的标记顺序。",
+        "vi": "Sự kiện theo dõi. Số sau chữ cái là thứ tự dấu mốc trong nghiên cứu.",
+    },
+    "sys_reference_delta_z": {
+        "ru": "Изменение электрического импеданса относительно опорного состояния.",
+        "en": "Electrical impedance change relative to the reference state.",
+        "zh": "相对于参考状态的电阻抗变化。",
+        "vi": "Thay đổi trở kháng điện so với trạng thái tham chiếu.",
+    },
+    "sys_reference_conductivity": {
+        "ru": "Реконструированная относительная электрическая проводимость сечения.",
+        "en": "Reconstructed relative electrical conductivity of the cross-section.",
+        "zh": "截面的重建相对电导率。",
+        "vi": "Độ dẫn điện tương đối được tái tạo của mặt cắt.",
+    },
+    "sys_reference_eeli": {
+        "ru": "Конечно-экспираторный индекс импеданса лёгких — уровень в конце выдоха.",
+        "en": "End-expiratory lung impedance index — the level at the end of expiration.",
+        "zh": "呼气末肺阻抗指数，即呼气结束时的水平。",
+        "vi": "Chỉ số trở kháng phổi cuối thì thở ra — mức tại cuối thì thở ra.",
+    },
+    "sys_reference_eili": {
+        "ru": "Конечно-инспираторный индекс импеданса лёгких — уровень в конце вдоха.",
+        "en": "End-inspiratory lung impedance index — the level at the end of inspiration.",
+        "zh": "吸气末肺阻抗指数，即吸气结束时的水平。",
+        "vi": "Chỉ số trở kháng phổi cuối thì hít vào — mức tại cuối thì hít vào.",
+    },
+    "sys_reference_tvi": {
+        "ru": "Импедансная дыхательная вариация: разность EILI и EELI за дыхательный цикл, в условных единицах.",
+        "en": "Impedance tidal variation: EILI minus EELI over one breath, in arbitrary units.",
+        "zh": "阻抗潮气变化：一个呼吸周期内 EILI 与 EELI 之差，单位为任意单位。",
+        "vi": "Biến thiên khí lưu thông theo trở kháng: EILI trừ EELI trong một nhịp thở, theo đơn vị quy ước.",
+    },
+    "sys_reference_mvi": {
+        "ru": "Импедансная минутная вентиляция: TVi × RRi, в условных единицах в минуту; не литры в минуту.",
+        "en": "Impedance minute ventilation: TVi × RRi in arbitrary units per minute; not litres per minute.",
+        "zh": "阻抗分钟通气量：TVi × RRi，单位为任意单位/分钟，并非升/分钟。",
+        "vi": "Thông khí phút theo trở kháng: TVi × RRi, đơn vị quy ước/phút; không phải lít/phút.",
+    },
+    "sys_reference_rr": {
+        "ru": "Частота дыхания — количество дыхательных циклов в минуту.",
+        "en": "Respiratory rate — the number of breathing cycles per minute.",
+        "zh": "呼吸频率，即每分钟的呼吸周期数。",
+        "vi": "Tần số thở — số chu kỳ hô hấp trong một phút.",
+    },
+    "sys_reference_rl": {
+        "ru": "Отношение вентиляции правого лёгкого к вентиляции левого лёгкого.",
+        "en": "Right-lung ventilation divided by left-lung ventilation.",
+        "zh": "右肺通气量与左肺通气量之比。",
+        "vi": "Tỷ số thông khí phổi phải trên thông khí phổi trái.",
+    },
+    "sys_reference_vd": {
+        "ru": "Отношение вентиляции вентральной области к вентиляции дорсальной области.",
+        "en": "Ventral-region ventilation divided by dorsal-region ventilation.",
+        "zh": "腹侧区域通气量与背侧区域通气量之比。",
+        "vi": "Tỷ số thông khí vùng bụng trên thông khí vùng lưng.",
+    },
+    "sys_reference_roi": {
+        "ru": "Область интереса — выделенная часть реконструированного сечения для регионарного анализа.",
+        "en": "Region of interest — a selected part of the reconstructed cross-section for regional analysis.",
+        "zh": "感兴趣区域，即用于区域分析的重建截面选定部分。",
+        "vi": "Vùng quan tâm — phần được chọn của mặt cắt tái tạo để phân tích khu vực.",
+    },
+    "sys_reference_n_percent": {
+        "ru": "Доля вентиляции выбранной области в общей вентиляции, в процентах.",
+        "en": "The selected region's share of total ventilation, in percent.",
+        "zh": "所选区域占总通气量的百分比。",
+        "vi": "Tỷ lệ thông khí của vùng được chọn trong tổng thông khí, tính bằng phần trăm.",
+    },
+    "sys_reference_peep": {
+        "ru": "Положительное давление в конце выдоха.",
+        "en": "Positive end-expiratory pressure.",
+        "zh": "呼气末正压。",
+        "vi": "Áp lực dương cuối thì thở ra.",
+    },
+    "sys_reference_rts": {
+        "ru": "Регионарный дыхательный сигнал, используемый при расчёте карты тихих пространств.",
+        "en": "Regional tidal signal used to calculate the Silent Spaces map.",
+        "zh": "用于计算静默空间图的区域潮气信号。",
+        "vi": "Tín hiệu khí lưu thông khu vực dùng để tính bản đồ vùng im lặng.",
+    },
+    "sys_reference_cov": {
+        "ru": "Центр вентиляции — координата распределения вентиляции по выбранной оси.",
+        "en": "Centre of ventilation — the ventilation-distribution coordinate along the selected axis.",
+        "zh": "通气中心，即沿所选轴的通气分布坐标。",
+        "vi": "Tâm thông khí — tọa độ phân bố thông khí theo trục đã chọn.",
+    },
+    "sys_reference_silent_spaces": {
+        "ru": "Зависимые и независимые тихие пространства — области с низким регионарным дыхательным сигналом.",
+        "en": "Dependent and non-dependent Silent Spaces — regions with low regional tidal signal.",
+        "zh": "依赖区和非依赖区静默空间，即区域潮气信号较低的区域。",
+        "vi": "Vùng im lặng phụ thuộc và không phụ thuộc — các vùng có tín hiệu khí lưu thông khu vực thấp.",
+    },
+    "sys_reference_fls": {
+        "ru": "Функциональный размер лёгких — доля пикселей с зарегистрированной вентиляцией.",
+        "en": "Functional lung size — the proportion of pixels with detected ventilation.",
+        "zh": "功能肺大小，即检测到通气的像素比例。",
+        "vi": "Kích thước phổi chức năng — tỷ lệ pixel phát hiện có thông khí.",
+    },
+    "sys_reference_trend_points": {
+        "ru": "BB — точки по завершённым дыхательным циклам; TB — точки по временным интервалам.",
+        "en": "BB — completed-breath points; TB — time-interval points.",
+        "zh": "BB 表示完整呼吸周期点；TB 表示时间间隔点。",
+        "vi": "BB — điểm theo chu kỳ thở hoàn chỉnh; TB — điểm theo khoảng thời gian.",
+    },
+    "sys_reference_au": {
+        "ru": "Условные единицы: относительная величина без объёмной калибровки.",
+        "en": "Arbitrary units: a relative value without volumetric calibration.",
+        "zh": "任意单位：未经体积校准的相对值。",
+        "vi": "Đơn vị quy ước: giá trị tương đối chưa hiệu chuẩn thể tích.",
+    },
     "sys_section_profile": {
         "ru": "Профиль сечения", "en": "Cross-section profile",
         "zh": "截面配置", "vi": "Cấu hình mặt cắt",
@@ -1184,6 +1437,26 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_section_rotation": {
         "ru": "Поворот", "en": "Rotation", "zh": "旋转", "vi": "Xoay",
     },
+    "sys_section_lungs_enabled": {
+        "ru": "Добавить лёгкие", "en": "Add lungs",
+        "zh": "添加肺部", "vi": "Thêm phổi",
+    },
+    "sys_section_edit_target": {
+        "ru": "Изменяемый контур", "en": "Contour to edit",
+        "zh": "编辑轮廓", "vi": "Đường viền chỉnh sửa",
+    },
+    "sys_section_target_section": {
+        "ru": "Сечение", "en": "Cross-section",
+        "zh": "截面", "vi": "Mặt cắt",
+    },
+    "sys_section_target_left_lung": {
+        "ru": "Левое лёгкое", "en": "Left lung",
+        "zh": "左肺", "vi": "Phổi trái",
+    },
+    "sys_section_target_right_lung": {
+        "ru": "Правое лёгкое", "en": "Right lung",
+        "zh": "右肺", "vi": "Phổi phải",
+    },
     "sys_section_vertical_symmetry": {
         "ru": "Вертикальная симметрия", "en": "Vertical symmetry",
         "zh": "垂直对称", "vi": "Đối xứng dọc",
@@ -1197,10 +1470,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "平滑轮廓", "vi": "Làm mượt đường viền",
     },
     "sys_section_hint": {
-        "ru": "Встроенные профили доступны только для просмотра. Создайте копию, чтобы изменить название, параметры эллипса или жёлтые точки. Изменения можно сохранить, сбросить и отменить. Расчётная геометрия активного исследования не меняется до его остановки.",
-        "en": "Built-in profiles are read-only. Create a copy to change its name, ellipse parameters, or yellow handles. Changes can be saved, reset, undone, and redone. A running study keeps its geometry until stopped.",
-        "zh": "内置配置仅供查看。请先创建副本，再调整椭圆或拖动黄色控制点。副本更改可保存、重置、撤销和重做。正在运行的研究会保留当前几何形状，直至停止。",
-        "vi": "Cấu hình tích hợp chỉ để xem. Hãy tạo bản sao rồi chỉnh elip hoặc kéo các điểm vàng. Có thể lưu, đặt lại, hoàn tác và làm lại thay đổi. Nghiên cứu đang chạy giữ nguyên hình học cho đến khi dừng.",
+        "ru": "Встроенные профили доступны только для просмотра. Создайте копию, чтобы изменить название и параметры. Для лёгкого: тяните за внутреннюю область, чтобы переместить его, или за жёлтые точки, чтобы изменить форму. Изменения можно сохранить, сбросить и отменить. Расчётная геометрия активного исследования не меняется до его остановки.",
+        "en": "Built-in profiles are read-only. Create a copy to change the name and parameters. For a lung, drag its interior to move it or drag the yellow handles to reshape it. Changes can be saved, reset, undone, and redone. A running study keeps its geometry until stopped.",
+        "zh": "内置配置仅供查看。请先创建副本再更改名称和参数。编辑肺部时，拖动内部区域可移动整个肺，拖动黄色控制点可改变形状。更改可保存、重置、撤销和重做。正在运行的研究会保留当前几何形状，直至停止。",
+        "vi": "Cấu hình tích hợp chỉ để xem. Hãy tạo bản sao để đổi tên và tham số. Với phổi, kéo vùng bên trong để di chuyển toàn bộ hoặc kéo các điểm màu vàng để đổi hình dạng. Có thể lưu, đặt lại, hoàn tác và làm lại thay đổi. Nghiên cứu đang chạy giữ nguyên hình học cho đến khi dừng.",
     },
     "sys_engineering_navigation_visibility": {
         "ru": "Вкладки интерфейса", "en": "Interface tabs",
@@ -1244,6 +1517,9 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_element_main_respiratory_rate": {"ru":"Частота дыханий","en":"Respiratory rate","zh":"呼吸频率","vi":"Tần số thở"},
     "sys_element_main_trends": {"ru":"Тренды","en":"Trends","zh":"趋势","vi":"Xu hướng"},
     "sys_element_main_controls": {"ru":"Кнопки и счётчики исследования","en":"Study controls and counters","zh":"检查控件和计时器","vi":"Điều khiển và bộ đếm nghiên cứu"},
+    "sys_element_express_monitoring_lung_map": {"ru":"Крупная визуализация дыхания","en":"Large breathing visualisation","zh":"大型呼吸可视化","vi":"Hiển thị nhịp thở lớn"},
+    "sys_element_express_monitoring_plethysmogram": {"ru":"Глобальная аэрация (плетизмограмма)","en":"Global aeration (plethysmogram)","zh":"全局通气（体积描记图）","vi":"Thông khí toàn thể (dạng sóng thể tích)"},
+    "sys_element_express_monitoring_metrics": {"ru":"Основные параметры дыхания","en":"Core respiratory parameters","zh":"主要呼吸参数","vi":"Các thông số hô hấp chính"},
     "sys_element_patient_card": {"ru":"Карточка пациента","en":"Patient card","zh":"患者卡片","vi":"Thẻ bệnh nhân"},
     "sys_element_patient_clinical": {"ru":"Клинические данные","en":"Clinical data","zh":"临床数据","vi":"Dữ liệu lâm sàng"},
     "sys_element_patient_history": {"ru":"История исследований","en":"Study history","zh":"检查历史","vi":"Lịch sử nghiên cứu"},
@@ -1258,7 +1534,9 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_element_analysis_waveforms": {"ru":"Кривые анализа","en":"Analysis waveforms","zh":"分析曲线","vi":"Đường cong phân tích"},
     "sys_element_analysis_classification": {"ru":"Классификация дыхания","en":"Breathing classification","zh":"呼吸分类","vi":"Phân loại hô hấp"},
     "sys_element_analysis_controls": {"ru":"Кнопки управления анализом","en":"Analysis controls","zh":"分析控件","vi":"Điều khiển phân tích"},
-    "sys_element_analysis_peep_tab": {"ru":"Вкладка PEEP","en":"PEEP tab","zh":"PEEP 选项卡","vi":"Thẻ PEEP"},
+    "sys_element_peep_map": {"ru":"Карта тихих пространств","en":"Silent Spaces map","zh":"静默空间图","vi":"Bản đồ vùng im lặng"},
+    "sys_element_peep_metrics": {"ru":"Показатели PEEP","en":"PEEP metrics","zh":"PEEP 指标","vi":"Các chỉ số PEEP"},
+    "sys_element_peep_controls": {"ru":"Кнопки и счётчики PEEP","en":"PEEP controls and counters","zh":"PEEP 控件和计时器","vi":"Điều khiển và bộ đếm PEEP"},
     "sys_element_eit_settings_acquisition": {"ru":"Параметры сбора ЭИТ","en":"EIT acquisition parameters","zh":"EIT 采集参数","vi":"Tham số thu nhận EIT"},
     "sys_element_eit_settings_visualization": {"ru":"Настройка визуализации","en":"Visualization settings","zh":"可视化设置","vi":"Cài đặt hiển thị"},
     "sys_element_eit_settings_pathology": {"ru":"Настройка патологии","en":"Pathology settings","zh":"病理设置","vi":"Cài đặt bệnh lý"},
@@ -1313,6 +1591,24 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "{seconds} с", "en": "{seconds} s",
         "zh": "{seconds} 秒", "vi": "{seconds} giây",
     },
+    "sys_engineering_background_color": {
+        "ru": "Цвет заднего фона:", "en": "Background colour:",
+        "zh": "背景颜色：", "vi": "Màu nền:",
+    },
+    "sys_engineering_background_picker_title": {
+        "ru": "Выбор цвета заднего фона", "en": "Select background colour",
+        "zh": "选择背景颜色", "vi": "Chọn màu nền",
+    },
+    "sys_engineering_background_reset": {
+        "ru": "По умолчанию", "en": "Reset to default",
+        "zh": "恢复默认", "vi": "Đặt lại mặc định",
+    },
+    "sys_engineering_waveform_fill": {
+        "ru": "Показывать заливку под графиками",
+        "en": "Show fill below charts",
+        "zh": "显示图表下方填充",
+        "vi": "Hiển thị phần tô bên dưới biểu đồ",
+    },
     "sys_engineering_tab_trends": {
         "ru": "Тренды", "en": "Trends", "zh": "趋势", "vi": "Xu hướng",
     },
@@ -1323,6 +1619,36 @@ STRINGS: dict[str, dict[str, str]] = {
     "sys_engineering_trend_chart_mode": {
         "ru": "Представление трендов:", "en": "Trend presentation:",
         "zh": "趋势显示：", "vi": "Hiển thị xu hướng:",
+    },
+    "sys_engineering_trend_rounding": {
+        "ru": "Знаков после запятой в трендах:",
+        "en": "Decimal places in trends:",
+        "zh": "趋势小数位数：",
+        "vi": "Số chữ số thập phân trong xu hướng:",
+    },
+    "sys_engineering_trend_visibility": {
+        "ru": "Рассчитываемые параметры трендов",
+        "en": "Calculated trend parameters",
+        "zh": "计算的趋势参数",
+        "vi": "Thông số xu hướng được tính toán",
+    },
+    "sys_engineering_trend_visibility_hint": {
+        "ru": "Снимите отметку, чтобы не рассчитывать и не отображать параметр в новых трендах. На остальных экранах параметр останется видимым.",
+        "en": "Clear a parameter to stop calculating and displaying it in new trends. It remains visible on other screens.",
+        "zh": "取消勾选后，新的趋势中将不再计算或显示该参数。该参数在其他屏幕上仍然可见。",
+        "vi": "Bỏ chọn để ngừng tính toán và hiển thị thông số trong các xu hướng mới. Thông số vẫn hiển thị trên các màn hình khác.",
+    },
+    "sys_engineering_aeration_visibility": {
+        "ru": "Глобальное отображение расчётных параметров аэрации",
+        "en": "Global display of calculated aeration parameters",
+        "zh": "全局显示计算的通气参数",
+        "vi": "Hiển thị toàn cục các thông số thông khí tính toán",
+    },
+    "sys_engineering_aeration_visibility_hint": {
+        "ru": "Снимите отметку, чтобы скрыть параметр во всём интерфейсе. Эта настройка не отключает его отдельный расчёт тренда.",
+        "en": "Clear a parameter to hide it throughout the interface. This does not disable its separate trend calculation.",
+        "zh": "取消勾选可在整个界面中隐藏该参数。此设置不会禁用其独立的趋势计算。",
+        "vi": "Bỏ chọn để ẩn thông số trên toàn bộ giao diện. Cài đặt này không tắt phép tính xu hướng riêng của thông số.",
     },
     "sys_trend_chart_bars": {
         "ru": "Столбцовые диаграммы", "en": "Bar charts",
@@ -1371,10 +1697,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "静默空间阈值：", "vi": "Ngưỡng vùng im lặng:",
     },
     "sys_engineering_peep_tab_visibility": {
-        "ru": "Показывать вкладку PEEP в разделе «Анализ»",
-        "en": "Show the PEEP tab in Analysis",
-        "zh": "在分析中显示 PEEP 选项卡",
-        "vi": "Hiển thị thẻ PEEP trong phần Phân tích",
+        "ru": "Показывать PEEP в правом меню",
+        "en": "Show PEEP in the right menu",
+        "zh": "在右侧菜单中显示 PEEP",
+        "vi": "Hiển thị PEEP trong menu bên phải",
     },
     "sys_engineering_peep_interval": {
         "ru": "Интервал анализа PEEP:", "en": "PEEP analysis interval:",

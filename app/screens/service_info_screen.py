@@ -699,16 +699,27 @@ class ServiceInfoScreen(QWidget):
         if not service.has_current_study:
             QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
             return
+        try:
+            marker = service.create("operator_note", "", service.default_author)
+        except EventMarkerError:
+            QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
+            return
+        self.refresh()
         dialog = EventMarkerDialog(
-            service.current_position_seconds,
+            marker.position_seconds,
             service.default_author,
+            correction=marker,
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
             return
         values = dialog.values()
+        if values.event_type == marker.event_type:
+            return
         try:
-            service.create(values.event_type, values.description, values.author)
+            service.correct(
+                marker.id, "", values.author, event_type=values.event_type,
+            )
         except EventMarkerError:
             QMessageBox.warning(self, t("study_action_error_title"), t("marker_unavailable"))
             return
@@ -733,7 +744,7 @@ class ServiceInfoScreen(QWidget):
         try:
             service.correct(
                 original.id,
-                values.description,
+                "",
                 values.author,
                 event_type=values.event_type,
             )

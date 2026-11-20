@@ -194,6 +194,74 @@ class TrendStorageTest(unittest.TestCase):
                 self.assertIsNotNone(point.metric_value(code))
         self.assertEqual(point.metric_value("mli_au"), 1.0)
 
+    def test_disabled_trend_metrics_are_not_persisted_but_other_metrics_remain(self):
+        now = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        study = Study(
+            patient_id=uuid4(), settings=AcquisitionSettings(),
+            status=StudyStatus.RUNNING, simulated=True,
+            created_at_utc=now, updated_at_utc=now,
+        )
+        session = MonitoringSession(
+            study_id=study.id, started_at_utc=now, simulated=True
+        )
+
+        class Repository:
+            def __init__(self):
+                self.points = []
+
+            def append(self, point):
+                self.points.append(point)
+
+        class Monitoring:
+            def subscribe_trend_samples(self, handler):
+                self.handler = handler
+                return lambda: None
+
+        hidden = {
+            "mvi_au_per_min", "rr_bpm", "mli_au", "right_percent",
+            "roi_1_tvi_au", "roi_1_percent",
+        }
+        repository = Repository()
+        monitoring = Monitoring()
+        lifecycle = SimpleNamespace(
+            status=StudyStatus.RUNNING,
+            current_study=study,
+            current_session=session,
+        )
+        service = TrendService(
+            repository,
+            monitoring,
+            lifecycle,
+            EventBus(),
+            hidden_metrics_provider=lambda: tuple(hidden),
+        )
+        monitoring.handler(TrendSample(
+            sequence_number=1,
+            timestamp_utc=now + timedelta(seconds=1),
+            global_value=1.0,
+            roi_values=(0.1,) * 8,
+            respiratory_rate_bpm=15.0,
+            quality=DataQuality.VALID,
+            metric_values=(
+                ("tvi_au", 1.0), ("mvi_au_per_min", 15.0),
+                ("rr_bpm", 15.0), ("right_percent", 52.0),
+                ("left_percent", 48.0), ("roi_1_tvi_au", 0.1),
+                ("roi_1_percent", 12.5),
+            ),
+        ))
+        service.flush()
+
+        point = repository.points[-1]
+        self.assertEqual(point.metric_value("tvi_au"), 1.0)
+        for code in hidden:
+            with self.subTest(code=code):
+                self.assertIsNone(point.metric_value(code))
+        self.assertIsNone(point.respiratory_rate_bpm)
+        self.assertIsNone(point.right_value)
+        self.assertIsNotNone(point.left_value)
+        self.assertIsNone(point.roi_values[0])
+        self.assertIsNotNone(point.roi_values[1])
+
     def test_archived_frame_uses_current_session_position_at_receipt(self):
         started = datetime(2026, 1, 2, tzinfo=timezone.utc)
         archived = started - timedelta(days=10)

@@ -151,7 +151,13 @@ class ApplicationContainer:
             position_provider=lambda: monitoring.current_position_seconds,
         )
         trend_service = TrendService(
-            repositories.trends, monitoring, lifecycle, event_bus
+            repositories.trends,
+            monitoring,
+            lifecycle,
+            event_bus,
+            hidden_metrics_provider=lambda: (
+                engineering_settings.current.hidden_trend_metrics
+            ),
         )
         adverse_event_service = AdverseEventService(
             repositories.events, lifecycle, event_bus

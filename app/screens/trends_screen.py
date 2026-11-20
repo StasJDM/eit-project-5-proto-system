@@ -27,6 +27,7 @@ from ..styles import (
 )
 from ..i18n import t, i18n
 from ..ui_text import study_status_text
+from ..widgets.chart_zoom import attach_chart_zoom
 
 
 # ── Typography (12″ display) — из styles + локальные акценты ─────────────────
@@ -309,6 +310,7 @@ class _BarRow(QWidget):
 
         data = self.chart._data
         self.lbl_pct.setText(f"{data[-1]:.0f}%")
+        attach_chart_zoom(self)
 
     def refresh(self, data: np.ndarray | None = None):
         if data is None:
@@ -341,12 +343,14 @@ class _MultiWave(QWidget):
         self._times = np.asarray([], dtype=float)
         self._axis_start = 0.0
         self._axis_end = float(DISPLAY_WINDOW_SEC)
-        self._markers: tuple[float, ...] = ()
+        self._markers: tuple[tuple[float, str], ...] = ()
         self._bad_intervals: tuple[tuple[float, float], ...] = ()
         self._chart_mode = "bars"
+        self._fill_enabled = True
         self._plot_left_margin = 58
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
+        attach_chart_zoom(self)
 
     def set_channels(self, channels: list[tuple[str, str]]) -> None:
         self._channels = list(channels)
@@ -357,6 +361,10 @@ class _MultiWave(QWidget):
         if mode not in {"bars", "lines"}:
             raise ValueError("unsupported trend chart mode")
         self._chart_mode = mode
+        self.update()
+
+    def set_fill_enabled(self, enabled: bool) -> None:
+        self._fill_enabled = bool(enabled)
         self.update()
 
     def set_data(
@@ -383,16 +391,23 @@ class _MultiWave(QWidget):
     def set_event_markers(self, events, time_values):
         times = np.asarray(time_values, dtype=float)
         start, end = self._axis_start, self._axis_end
+        numbered_events = tuple(
+            (event, f"{t('marker_chart_prefix')}{number}")
+            for number, event in enumerate(
+                (item for item in events if item.corrects_event_id is None), start=1,
+            )
+        )
         if times.size == 1:
             self._markers = tuple(
-                (float(event.position_seconds) - start) / (end - start)
-                for event in events if start <= float(event.position_seconds) <= end
+                ((float(event.position_seconds) - start) / (end - start), label)
+                for event, label in numbered_events
+                if start <= float(event.position_seconds) <= end
             )
         else:
             span = end - start
             self._markers = tuple(
-                min(1.0, (float(event.position_seconds) - start) / span)
-                for event in events
+                (min(1.0, (float(event.position_seconds) - start) / span), label)
+                for event, label in numbered_events
                 if start <= float(event.position_seconds) <= end
             )
         self.update()
@@ -552,7 +567,8 @@ class _MultiWave(QWidget):
                             )
                         elif len(segment_x) >= 2:
                             draw_filled_waveform(
-                                p, segment_x, segment_y, QColor(color), baseline
+                                p, segment_x, segment_y, QColor(color), baseline,
+                                fill_enabled=self._fill_enabled,
                             )
                             segment_x, segment_y = [], []
                         else:
@@ -560,10 +576,19 @@ class _MultiWave(QWidget):
 
             ch_top += ch_h
 
-        p.setPen(QPen(QColor(C["warn"]), 2, Qt.DashLine))
-        for position in self._markers:
+        marker_pen = QPen(QColor(C["warn"]), 2, Qt.DashLine)
+        for position, label in self._markers:
             marker_x = ML + max(0.0, min(1.0, position)) * pw
-            p.drawLine(int(marker_x), MT, int(marker_x), MT + int(tot_h))
+            p.setPen(marker_pen)
+            p.drawLine(int(marker_x), MT + 22, int(marker_x), MT + int(tot_h))
+            label_width = p.fontMetrics().horizontalAdvance(label) + 10
+            label_x = max(ML, min(ML + pw - label_width, marker_x - label_width / 2))
+            badge = QRectF(label_x, MT, label_width, 20)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(C["warn"])))
+            p.drawRoundedRect(badge, 4, 4)
+            p.setPen(QPen(QColor(C["bg_main"])))
+            p.drawText(badge, Qt.AlignCenter, label)
 
 
 class _TrendTable(QWidget):
@@ -1168,46 +1193,156 @@ class _AllTrendsTab(QWidget):
 class _MetricValueTable(QTableWidget):
     """Numeric view of the exact metric series rendered by the adjacent charts."""
 
+    follow_latest_changed = Signal(bool)
+
+    VALUE_FONT_PX = FONT_LABEL
+    HEADER_FONT_PX = FONT_VALUE
+    HEADER_ROW_HEIGHT = 48
+    DESIGNATION_MIN_WIDTH = 190
+
     def __init__(self, metrics, parent=None):
         self.metrics = tuple(metrics)
         super().__init__(len(self.metrics), 0, parent)
         self._rendered_times = np.asarray([], dtype=float)
         self._rendered_series: list[np.ndarray] = []
         self._rendered_axis_range: tuple[float, float] | None = None
+        self._decimal_places = 0
+        self._follow_latest = True
+        self._programmatic_scroll = False
         self.setObjectName("trend_values_table")
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setAlternatingRowColors(True)
         self.setWordWrap(False)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setVerticalHeaderLabels([
             f"{label}, {unit}" if unit else label
             for label, _code, unit in self.metrics
         ])
         self.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.verticalHeader().setDefaultSectionSize(42)
-        self.verticalHeader().setMinimumWidth(116)
+        self.verticalHeader().setDefaultSectionSize(self.HEADER_ROW_HEIGHT)
+        self.verticalHeader().setMinimumWidth(self.DESIGNATION_MIN_WIDTH)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.horizontalHeader().setMinimumSectionSize(78)
+        self.horizontalHeader().setMinimumHeight(self.HEADER_ROW_HEIGHT)
         self.setStyleSheet(f"""
-            QTableWidget {{
-                background:{C['bg_wave']};color:{C['text']};
-                alternate-background-color:{C['bg_card']};
+            QTableWidget#trend_values_table {{
+                background:{C['bg_table']};color:{C['text']};
+                alternate-background-color:{C['bg_table_alt']};
                 border:1px solid {C['border']};gridline-color:{C['border']};
-                font-size:{FONT_LABEL}px;
+                font-size:{self.VALUE_FONT_PX}px;
+                selection-background-color:{C['blue']};
+                selection-color:{C['text']};
             }}
-            QHeaderView::section {{
-                background:{C['bg_panel']};color:{C['text_dim']};
+            QTableWidget#trend_values_table::item {{
+                background:{C['bg_table']};
+            }}
+            QTableWidget#trend_values_table::item:alternate {{
+                background:{C['bg_table_alt']};
+            }}
+            QTableWidget#trend_values_table QHeaderView {{
+                font-size:{self.HEADER_FONT_PX}px;font-weight:bold;
+            }}
+            QTableWidget#trend_values_table QHeaderView::section {{
+                background:{C['bg_table_header']};color:{C['text']};
                 border:0;border-right:1px solid {C['border']};
                 border-bottom:1px solid {C['border']};padding:6px;
-                font-size:{FONT_SMALL}px;font-weight:bold;
+                font-size:{self.HEADER_FONT_PX}px;font-weight:bold;
+            }}
+            QTableWidget#trend_values_table QTableCornerButton::section {{
+                background:{C['bg_table_header']};
+                border:0;border-right:1px solid {C['border']};
+                border-bottom:1px solid {C['border']};
             }}
         """)
+        value_font = self.font()
+        value_font.setPixelSize(self.VALUE_FONT_PX)
+        self.setFont(value_font)
+        for header in (self.horizontalHeader(), self.verticalHeader()):
+            header_font = header.font()
+            header_font.setPixelSize(self.HEADER_FONT_PX)
+            header_font.setBold(True)
+            header.setFont(header_font)
+        scrollbar = self.horizontalScrollBar()
+        scrollbar.sliderPressed.connect(lambda: self._set_follow_latest(False))
+        scrollbar.valueChanged.connect(self._on_horizontal_scroll)
+        scrollbar.rangeChanged.connect(self._on_horizontal_range_changed)
 
-    @staticmethod
-    def _format_value(value: float) -> str:
+    @property
+    def follow_latest(self) -> bool:
+        return self._follow_latest
+
+    def _set_follow_latest(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self._follow_latest:
+            return
+        self._follow_latest = enabled
+        self.follow_latest_changed.emit(enabled)
+
+    def _on_horizontal_scroll(self, value: int) -> None:
+        if self._programmatic_scroll:
+            return
+        scrollbar = self.horizontalScrollBar()
+        self._set_follow_latest(value >= scrollbar.maximum())
+
+    def _on_horizontal_range_changed(self, _minimum: int, _maximum: int) -> None:
+        if self._follow_latest:
+            QTimer.singleShot(0, self._scroll_to_latest_if_following)
+
+    def _scroll_to_latest_if_following(self) -> None:
+        if not self._follow_latest or self.columnCount() == 0:
+            return
+        self._programmatic_scroll = True
+        try:
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().maximum()
+            )
+        finally:
+            self._programmatic_scroll = False
+
+    def scroll_columns(self, direction: int) -> None:
+        """Move by one visible data column and update follow-latest mode."""
+        if direction == 0 or self.columnCount() == 0 or self.rowCount() == 0:
+            return
+        scrollbar = self.horizontalScrollBar()
+        viewport_width = max(1, self.viewport().width())
+        if direction < 0:
+            column = max(0, self.columnAt(0))
+            self._set_follow_latest(False)
+        else:
+            column = self.columnAt(viewport_width - 1)
+            if column < 0:
+                column = self.columnCount() - 1
+        step = max(1, self.horizontalHeader().sectionSize(column))
+        target = scrollbar.value() + (-step if direction < 0 else step)
+        self._programmatic_scroll = True
+        try:
+            scrollbar.setValue(target)
+        finally:
+            self._programmatic_scroll = False
+        self._set_follow_latest(scrollbar.value() >= scrollbar.maximum())
+
+    def _format_value(self, value: float) -> str:
         if not np.isfinite(value):
             return "—"
-        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+        rounded = round(float(value), self._decimal_places)
+        if rounded == 0:
+            rounded = 0.0
+        return f"{rounded:.{self._decimal_places}f}"
+
+    def set_decimal_places(self, decimal_places: int) -> None:
+        if decimal_places == self._decimal_places:
+            return
+        self._decimal_places = int(decimal_places)
+        for row in range(self.rowCount()):
+            for column in range(self.columnCount()):
+                item = self.item(row, column)
+                if item is None:
+                    continue
+                value = item.data(Qt.UserRole)
+                item.setText(
+                    "—" if value is None else self._format_value(float(value))
+                )
 
     def set_series(
         self,
@@ -1249,6 +1384,7 @@ class _MetricValueTable(QTableWidget):
                     None if not np.isfinite(value) else float(value),
                 )
                 self.setItem(row, column, item)
+        QTimer.singleShot(0, self._scroll_to_latest_if_following)
 
 
 class _MetricChartsTab(QWidget):
@@ -1272,15 +1408,97 @@ class _MetricChartsTab(QWidget):
         self.wave.setMinimumHeight(max(420, len(channels) * 92))
 
         self.table = _MetricValueTable(self.metrics)
-        layout.addWidget(self.table, stretch=1)
-        layout.addWidget(_vsep())
+        self.table_panel = QWidget()
+        self.table_panel.setObjectName("trend_table_panel")
+        self.table_panel.setStyleSheet(f"""
+            QWidget#trend_table_panel {{
+                background:{C['bg_table']};
+                border:1px solid {C['border']};
+                border-radius:6px;
+            }}
+            QWidget#trend_table_panel QWidget {{
+                background:transparent;
+                border:none;
+            }}
+        """)
+        table_layout = QVBoxLayout(self.table_panel)
+        table_layout.setContentsMargins(4, 4, 4, 4)
+        table_layout.setSpacing(4)
+        table_layout.addWidget(self.table, stretch=1)
 
+        navigator = QWidget()
+        navigator.setFixedHeight(52)
+        navigator_layout = QHBoxLayout(navigator)
+        navigator_layout.setContentsMargins(4, 2, 4, 2)
+        navigator_layout.setSpacing(10)
+        self.table_previous_button = QPushButton("◀")
+        self.table_next_button = QPushButton("▶")
+        for button in (self.table_previous_button, self.table_next_button):
+            button.setFixedSize(64, 48)
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background:{C['bg_card']};color:{C['text']};
+                    border:1px solid {C['blue_light']};border-radius:7px;
+                    font-size:{FONT_VALUE}px;font-weight:bold;
+                }}
+                QPushButton:pressed {{ background:{C['blue_dark']}; }}
+                QPushButton:disabled {{ color:{C['text_dim']};border-color:{C['border']}; }}
+            """)
+        self.table_follow_label = QLabel()
+        self.table_follow_label.setAlignment(Qt.AlignCenter)
+        self.table_follow_label.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;"
+        )
+        self.table_previous_button.clicked.connect(
+            lambda: self.table.scroll_columns(-1)
+        )
+        self.table_next_button.clicked.connect(
+            lambda: self.table.scroll_columns(1)
+        )
+        self.table.follow_latest_changed.connect(self._update_follow_label)
+        scrollbar = self.table.horizontalScrollBar()
+        scrollbar.valueChanged.connect(self._update_table_navigation)
+        scrollbar.rangeChanged.connect(
+            lambda _minimum, _maximum: self._update_table_navigation()
+        )
+        navigator_layout.addWidget(self.table_previous_button)
+        navigator_layout.addStretch()
+        navigator_layout.addWidget(self.table_follow_label)
+        navigator_layout.addStretch()
+        navigator_layout.addWidget(self.table_next_button)
+        table_layout.addWidget(navigator)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setWidget(self.wave)
-        layout.addWidget(self.scroll, stretch=1)
+        self.empty_label = QLabel(t("trends_no_visible_metrics"))
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_VALUE}px;padding:24px;"
+        )
+        if self.metrics:
+            layout.addWidget(self.table_panel, stretch=1)
+            layout.addWidget(_vsep())
+            layout.addWidget(self.scroll, stretch=1)
+            self.empty_label.hide()
+        else:
+            self.table_panel.hide()
+            self.scroll.hide()
+            layout.addWidget(self.empty_label, stretch=1)
+        self.retranslate()
+        QTimer.singleShot(0, self._update_table_navigation)
+
+    def _update_table_navigation(self, *_args) -> None:
+        scrollbar = self.table.horizontalScrollBar()
+        self.table_previous_button.setEnabled(scrollbar.value() > scrollbar.minimum())
+        self.table_next_button.setEnabled(scrollbar.value() < scrollbar.maximum())
+
+    def _update_follow_label(self, following: bool) -> None:
+        self.table_follow_label.setText(t(
+            "trends_following_latest" if following else "trends_history_view"
+        ))
 
     def refresh(self, waves: dict) -> None:
         metric_values = waves.get("metrics", {})
@@ -1294,6 +1512,17 @@ class _MetricChartsTab(QWidget):
             waves["time"],
             waves["axis_range"],
         )
+
+    def set_decimal_places(self, decimal_places: int) -> None:
+        self.table.set_decimal_places(decimal_places)
+
+    def retranslate(self) -> None:
+        self.empty_label.setText(t("trends_no_visible_metrics"))
+        self.table_previous_button.setToolTip(t("trends_previous_columns"))
+        self.table_previous_button.setAccessibleName(t("trends_previous_columns"))
+        self.table_next_button.setToolTip(t("trends_next_columns"))
+        self.table_next_button.setAccessibleName(t("trends_next_columns"))
+        self._update_follow_label(self.table.follow_latest)
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1440,6 +1669,10 @@ class TrendsScreen(QWidget):
         self._trend_point_mode = "interval"
         self._trend_downsampling_mode = "manual_adult"
         self._trend_chart_mode = "bars"
+        self._waveform_fill_enabled = True
+        self._trend_decimal_places = 0
+        self._hidden_trend_metrics: tuple[str, ...] = ()
+        self._hidden_aeration_metrics: tuple[str, ...] = ()
         self._unsubscribe_engineering = None
         if engineering_settings is not None:
             self._unsubscribe_engineering = engineering_settings.subscribe(
@@ -1458,15 +1691,26 @@ class TrendsScreen(QWidget):
 
     def _apply_engineering_settings(self, settings: EngineeringSettings) -> None:
         roi_count_changed = settings.roi_count != self._roi_count
+        hidden_metrics_changed = (
+            settings.hidden_trend_metrics != self._hidden_trend_metrics
+            or settings.hidden_aeration_metrics != self._hidden_aeration_metrics
+        )
         self._roi_count = settings.roi_count
         self._trend_point_mode = settings.trend_point_mode
         self._trend_downsampling_mode = settings.trend_downsampling_mode
         self._trend_chart_mode = settings.trend_chart_mode
+        self._waveform_fill_enabled = settings.waveform_fill_enabled
+        self._trend_decimal_places = settings.trend_decimal_places
+        self._hidden_trend_metrics = settings.hidden_trend_metrics
+        self._hidden_aeration_metrics = settings.hidden_aeration_metrics
         if hasattr(self, "stack"):
-            if roi_count_changed:
-                self._rebuild_roi_metric_tabs()
+            if roi_count_changed or hidden_metrics_changed:
+                self._rebuild_metric_tabs()
             for wave in self._trend_waves():
                 wave.set_chart_mode(self._trend_chart_mode)
+                wave.set_fill_enabled(self._waveform_fill_enabled)
+            for tab in self._trend_tabs():
+                tab.set_decimal_places(self._trend_decimal_places)
             self._refresh()
 
     def closeEvent(self, event) -> None:
@@ -1512,9 +1756,12 @@ class TrendsScreen(QWidget):
         self._sync_studies()
 
         self.stack = QStackedWidget()
-        self._regional_metrics = _regional_trend_metrics(self._roi_count)
-        self._calculated_metrics = _GLOBAL_TREND_METRICS + self._regional_metrics
-        self.tab_global   = _MetricChartsTab(_GLOBAL_TREND_METRICS)
+        self._global_metrics = self._visible_metrics(_GLOBAL_TREND_METRICS)
+        self._regional_metrics = self._visible_metrics(
+            _regional_trend_metrics(self._roi_count)
+        )
+        self._calculated_metrics = self._global_metrics + self._regional_metrics
+        self.tab_global   = _MetricChartsTab(self._global_metrics)
         self.tab_regional = _MetricChartsTab(self._regional_metrics)
         self.tab_all      = _MetricChartsTab(self._calculated_metrics)
         self.stack.addWidget(self.tab_global)
@@ -1522,6 +1769,9 @@ class TrendsScreen(QWidget):
         self.stack.addWidget(self.tab_all)
         for wave in self._trend_waves():
             wave.set_chart_mode(self._trend_chart_mode)
+            wave.set_fill_enabled(self._waveform_fill_enabled)
+        for tab in self._trend_tabs():
+            tab.set_decimal_places(self._trend_decimal_places)
         outer.addWidget(self.stack, stretch=1)
 
         self.bottom = _BottomBar()
@@ -1530,22 +1780,38 @@ class TrendsScreen(QWidget):
         self.tab_bar.tab_changed.connect(self.stack.setCurrentIndex)
         i18n.language_changed.connect(self.retranslate)
 
-    def _rebuild_roi_metric_tabs(self) -> None:
+    def _visible_metrics(self, metrics):
+        hidden = set(self._hidden_trend_metrics) | set(
+            self._hidden_aeration_metrics
+        )
+        return tuple(metric for metric in metrics if metric[1] not in hidden)
+
+    def _rebuild_metric_tabs(self) -> None:
         current_index = self.stack.currentIndex()
-        old_regional, old_all = self.tab_regional, self.tab_all
-        self._regional_metrics = _regional_trend_metrics(self._roi_count)
-        self._calculated_metrics = _GLOBAL_TREND_METRICS + self._regional_metrics
+        old_tabs = self._trend_tabs()
+        self._global_metrics = self._visible_metrics(_GLOBAL_TREND_METRICS)
+        self._regional_metrics = self._visible_metrics(
+            _regional_trend_metrics(self._roi_count)
+        )
+        self._calculated_metrics = self._global_metrics + self._regional_metrics
+        self.tab_global = _MetricChartsTab(self._global_metrics)
         self.tab_regional = _MetricChartsTab(self._regional_metrics)
         self.tab_all = _MetricChartsTab(self._calculated_metrics)
-        self.stack.removeWidget(old_regional)
-        self.stack.removeWidget(old_all)
-        old_regional.deleteLater()
-        old_all.deleteLater()
+        for old_tab in old_tabs:
+            self.stack.removeWidget(old_tab)
+            old_tab.deleteLater()
+        self.stack.insertWidget(0, self.tab_global)
         self.stack.insertWidget(1, self.tab_regional)
         self.stack.insertWidget(2, self.tab_all)
         self.stack.setCurrentIndex(current_index)
         for wave in self._trend_waves():
             wave.set_chart_mode(self._trend_chart_mode)
+            wave.set_fill_enabled(self._waveform_fill_enabled)
+        for tab in self._trend_tabs():
+            tab.set_decimal_places(self._trend_decimal_places)
+
+    def _trend_tabs(self) -> tuple[_MetricChartsTab, ...]:
+        return self.tab_global, self.tab_regional, self.tab_all
 
     def _trend_waves(self) -> tuple[_MultiWave, ...]:
         return (
@@ -1779,7 +2045,7 @@ class TrendsScreen(QWidget):
     def retranslate(self):
         self.tab_bar.retranslate()
         self.bottom.retranslate()
-        if hasattr(self.tab_regional, "retranslate"):
-            self.tab_regional.retranslate()
+        for tab in self._trend_tabs():
+            tab.retranslate()
         self._study_ids = []
         self._sync_studies()

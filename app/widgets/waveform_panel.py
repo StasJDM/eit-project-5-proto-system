@@ -18,6 +18,7 @@ from ..styles import (
     FONT_MEDICAL_VALUE,
 )
 from ..i18n import t, i18n
+from .chart_zoom import attach_chart_zoom
 
 
 # ── Single waveform canvas ───────────────────────────────────────────────────
@@ -31,6 +32,7 @@ class _WaveCanvas(QWidget):
         self._markers: tuple[tuple[float, str], ...] = ()
         self._color = QColor(color)
         self._bg    = QColor(C["bg_wave"])
+        self._fill_enabled = True
         self.setMinimumHeight(44)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
@@ -41,6 +43,10 @@ class _WaveCanvas(QWidget):
 
     def set_markers(self, markers: tuple[tuple[float, str], ...]):
         self._markers = markers
+        self.update()
+
+    def set_fill_enabled(self, enabled: bool) -> None:
+        self._fill_enabled = bool(enabled)
         self.update()
 
     def paintEvent(self, _):
@@ -75,11 +81,23 @@ class _WaveCanvas(QWidget):
             xs.append(x)
             ys.append(y)
 
-        draw_filled_waveform(painter, xs, ys, self._color, my + ph)
-        painter.setPen(QPen(QColor(C["warn"]), 2, Qt.DashLine))
-        for position, _label in self._markers:
+        draw_filled_waveform(
+            painter, xs, ys, self._color, my + ph,
+            fill_enabled=self._fill_enabled,
+        )
+        marker_pen = QPen(QColor(C["warn"]), 2, Qt.DashLine)
+        for position, label in self._markers:
             x = mx + max(0.0, min(1.0, position)) * pw
-            painter.drawLine(int(x), my, int(x), my + ph)
+            painter.setPen(marker_pen)
+            painter.drawLine(int(x), my + 18, int(x), my + ph)
+            label_width = painter.fontMetrics().horizontalAdvance(label) + 10
+            label_x = max(mx, min(mx + pw - label_width, x - label_width / 2))
+            badge = QRectF(label_x, my, label_width, 18)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(C["warn"])))
+            painter.drawRoundedRect(badge, 4, 4)
+            painter.setPen(QPen(QColor(C["bg_main"])))
+            painter.drawText(badge, Qt.AlignCenter, label)
 
 
 def _format_monitoring_time(seconds: float) -> str:
@@ -433,6 +451,8 @@ class RegionalWaveformPanel(QWidget):
     def __init__(self, parent=None, *, roi_count: int = 8):
         super().__init__(parent)
         self._roi_count = roi_count
+        self._fill_enabled = True
+        self._hidden_aeration_metrics: set[str] = set()
         self.setStyleSheet(f"background-color:{C['bg_wave']};")
 
         outer = QHBoxLayout(self)
@@ -448,6 +468,7 @@ class RegionalWaveformPanel(QWidget):
         outer.addWidget(self._col_r.widget, stretch=1)
 
         i18n.language_changed.connect(self.retranslate)
+        attach_chart_zoom(self)
 
     def _build_column(
         self, section: str, i18n_key: str, roi_start: int, band_count: int
@@ -472,6 +493,7 @@ class RegionalWaveformPanel(QWidget):
             row = _WaveRow(
                 f"ROI_{idx + 1}", roi_colors[i % len(roi_colors)], size="compact"
             )
+            row.canvas.set_fill_enabled(self._fill_enabled)
             lay.addWidget(row, stretch=1)
             rois.append(row)
 
@@ -484,6 +506,7 @@ class RegionalWaveformPanel(QWidget):
         bands = roi_count // 2
         self._rebuild_column_rois(self._col_r, 0, bands)
         self._rebuild_column_rois(self._col_l, bands, bands)
+        self._apply_aeration_metric_visibility()
 
     def _rebuild_column_rois(
         self, column: _LungColumn, roi_start: int, band_count: int
@@ -499,8 +522,37 @@ class RegionalWaveformPanel(QWidget):
                 colors[index % len(colors)],
                 size="compact",
             )
+            row.canvas.set_fill_enabled(self._fill_enabled)
             column.layout.addWidget(row, stretch=1)
             column.rois.append(row)
+
+    def set_fill_enabled(self, enabled: bool) -> None:
+        self._fill_enabled = bool(enabled)
+        for row in (
+            self._col_r.agg, self._col_l.agg,
+            *self._col_r.rois, *self._col_l.rois,
+        ):
+            row.canvas.set_fill_enabled(self._fill_enabled)
+
+    def set_aeration_metric_visibility(self, hidden_metrics) -> None:
+        self._hidden_aeration_metrics = set(hidden_metrics)
+        self._apply_aeration_metric_visibility()
+
+    def _apply_aeration_metric_visibility(self) -> None:
+        hidden = self._hidden_aeration_metrics
+        self._col_r.agg.pct_box.setVisible("right_percent" not in hidden)
+        self._col_r.agg.trend_box.setVisible("right_percent" not in hidden)
+        self._col_l.agg.pct_box.setVisible("left_percent" not in hidden)
+        self._col_l.agg.trend_box.setVisible("left_percent" not in hidden)
+        bands = self._roi_count // 2
+        for index, row in enumerate(self._col_r.rois, start=1):
+            visible = f"roi_{index}_percent" not in hidden
+            row.pct_box.setVisible(visible)
+            row.trend_box.setVisible(visible)
+        for index, row in enumerate(self._col_l.rois, start=bands + 1):
+            visible = f"roi_{index}_percent" not in hidden
+            row.pct_box.setVisible(visible)
+            row.trend_box.setVisible(visible)
 
     def update_all(
         self,
@@ -575,6 +627,9 @@ class WaveformPanel(QWidget):
         self._show_regional = show_regional
         self._roi_count = roi_count
         self._trends_visible = True
+        self._fill_enabled = True
+        self._hidden_aeration_metrics: set[str] = set()
+        self._respiratory_rate_metric_visible = True
         self._regional_column_layouts: dict[str, QVBoxLayout] = {}
         # Главный экран: 9 каналов в ~740 px — компактные ROI + растяжение Σ LI.
         self._dense = show_global and show_regional and not expand_global
@@ -736,6 +791,7 @@ class WaveformPanel(QWidget):
             outer.addWidget(bottom)
 
         i18n.language_changed.connect(self.retranslate)
+        attach_chart_zoom(self)
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -762,21 +818,77 @@ class WaveformPanel(QWidget):
                     size="compact",
                     expand=True,
                 )
+                row.canvas.set_fill_enabled(self._fill_enabled)
                 row.trend_box.setVisible(self._trends_visible)
                 layout.addWidget(row, stretch=_MAIN_ROI_STRETCH)
                 target.append(row)
+        self._apply_aeration_metric_visibility()
 
-    def set_trends_visible(self, visible: bool) -> None:
-        self._trends_visible = bool(visible)
+    def set_fill_enabled(self, enabled: bool) -> None:
+        self._fill_enabled = bool(enabled)
         for row in (
             self.row_global,
+            self.row_velocity,
             self.row_r_agg,
             self.row_l_agg,
             *self.rows_r,
             *self.rows_l,
         ):
             if row is not None:
-                row.trend_box.setVisible(self._trends_visible)
+                row.canvas.set_fill_enabled(self._fill_enabled)
+
+    def set_trends_visible(self, visible: bool) -> None:
+        self._trends_visible = bool(visible)
+        self._apply_aeration_metric_visibility()
+
+    def set_aeration_metric_visibility(
+        self,
+        hidden_metrics,
+        *,
+        respiratory_rate_visible: bool = True,
+    ) -> None:
+        self._hidden_aeration_metrics = set(hidden_metrics)
+        self._respiratory_rate_metric_visible = bool(respiratory_rate_visible)
+        self._apply_aeration_metric_visibility()
+
+    def _set_row_metric_visibility(
+        self,
+        row: _WaveRow | None,
+        code: str,
+        *,
+        rr: bool = False,
+    ) -> None:
+        if row is None:
+            return
+        metric_visible = code not in self._hidden_aeration_metrics
+        row.pct_box.setVisible(metric_visible)
+        row.trend_box.setVisible(self._trends_visible and metric_visible)
+        rr_visible = False
+        if row.rr_box is not None:
+            rr_visible = (
+                rr
+                and self._respiratory_rate_metric_visible
+                and "rr_bpm" not in self._hidden_aeration_metrics
+            )
+            row.rr_box.setVisible(rr_visible)
+        if row.metrics_stack is not None:
+            row.metrics_stack.setVisible(
+                metric_visible
+                or (self._trends_visible and metric_visible)
+                or rr_visible
+            )
+
+    def _apply_aeration_metric_visibility(self) -> None:
+        self._set_row_metric_visibility(
+            self.row_global, "total_percent", rr=True
+        )
+        self._set_row_metric_visibility(self.row_r_agg, "right_percent")
+        self._set_row_metric_visibility(self.row_l_agg, "left_percent")
+        bands = self._roi_count // 2
+        for index, row in enumerate(self.rows_r, start=1):
+            self._set_row_metric_visibility(row, f"roi_{index}_percent")
+        for index, row in enumerate(self.rows_l, start=bands + 1):
+            self._set_row_metric_visibility(row, f"roi_{index}_percent")
 
     def update_all(
         self,
@@ -863,10 +975,16 @@ def _relative_markers(events, time_values) -> tuple[tuple[float, str], ...]:
         return ()
     start, end = float(times[0]), float(times[-1])
     boundary_tolerance = 0.5
+    numbered_events = tuple(
+        (event, f"{t('marker_chart_prefix')}{number}")
+        for number, event in enumerate(
+            (item for item in events if item.corrects_event_id is None), start=1,
+        )
+    )
     if times.size == 1:
         return tuple(
-            (1.0 if float(event.position_seconds) >= start else 0.0, event.event_type)
-            for event in events
+            (1.0 if float(event.position_seconds) >= start else 0.0, label)
+            for event, label in numbered_events
             if abs(float(event.position_seconds) - start) <= boundary_tolerance
         )
     span = end - start
@@ -877,11 +995,11 @@ def _relative_markers(events, time_values) -> tuple[tuple[float, str], ...]:
     # a second after a just-created operator marker. Keep that boundary marker
     # visible instead of dropping it from the journal/timeline link.
     result = []
-    for event in events:
+    for event, label in numbered_events:
         position = float(event.position_seconds)
         if start - boundary_tolerance <= position <= end + boundary_tolerance:
             result.append((
                 max(0.0, min(1.0, (position - start) / span)),
-                event.event_type,
+                label,
             ))
     return tuple(result)

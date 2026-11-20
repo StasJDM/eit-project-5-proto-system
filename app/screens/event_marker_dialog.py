@@ -1,28 +1,23 @@
-"""Shared dialog used by every event-marker entry point."""
+"""Touch-friendly event type chooser used by every marker entry point."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit,
-    QTextEdit, QVBoxLayout,
-)
+from PySide6.QtWidgets import QDialog, QGridLayout, QPushButton, QVBoxLayout
 
-from ..application import MARKER_TYPES
 from ..domain import Event
 from ..i18n import t
-from ..styles import C, FONT_BASE
+from ..styles import C, FONT_BTN
 
 
-_TYPE_KEYS = {
-    "cough": "marker_type_cough",
-    "procedure": "marker_type_procedure",
-    "position_change": "marker_type_position",
-    "suction": "marker_type_suction",
-    "operator_note": "marker_type_note",
-}
+_TYPE_BUTTONS = (
+    ("cough", "marker_type_cough"),
+    ("procedure", "marker_type_procedure"),
+    ("position_change", "marker_type_position"),
+    ("operator_note", "marker_type_other"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +28,8 @@ class MarkerDialogValues:
 
 
 class EventMarkerDialog(QDialog):
+    """Offers four large choices and closes immediately after selection."""
+
     def __init__(
         self,
         position_seconds: float,
@@ -42,64 +39,55 @@ class EventMarkerDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(t("marker_correction_title" if correction else "marker_dialog_title"))
-        self.setMinimumWidth(520)
+        del position_seconds  # The marker position is captured before this dialog opens.
+        self._author = default_author.strip()
+        self._event_type = "operator_note"
+        self.setWindowTitle(t("marker_dialog_title"))
+        self.setMinimumSize(640, 300)
+        self.setModal(True)
         self.setStyleSheet(f"""
             QDialog {{ background:{C['bg_panel']}; color:{C['text']}; }}
-            QLabel {{ color:{C['text']}; font-size:{FONT_BASE}px; }}
-            QLineEdit, QTextEdit, QComboBox {{
+            QPushButton {{
                 background:{C['bg_card']}; color:{C['text']};
-                border:1px solid {C['border_light']}; border-radius:4px;
-                padding:6px; font-size:{FONT_BASE}px;
+                border:2px solid {C['border_light']}; border-radius:10px;
+                padding:14px; font-size:{FONT_BTN}px; font-weight:bold;
+            }}
+            QPushButton:pressed {{
+                background:{C['blue_dark']}; border-color:{C['blue_light']};
             }}
         """)
+
         layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self._position = QLabel(_format_position(position_seconds))
-        self._position.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        form.addRow(t("marker_position"), self._position)
+        layout.setContentsMargins(20, 20, 20, 20)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(16)
+        layout.addLayout(grid)
 
-        self._type = QComboBox()
-        for value in MARKER_TYPES:
-            self._type.addItem(t(_TYPE_KEYS[value]), value)
-        if correction is not None:
-            index = self._type.findData(correction.event_type)
-            if index >= 0:
-                self._type.setCurrentIndex(index)
-        form.addRow(t("marker_type"), self._type)
-
-        self._author = QLineEdit(default_author)
-        form.addRow(t("marker_author"), self._author)
-        layout.addLayout(form)
-        layout.addWidget(QLabel(t("marker_description")))
-        self._description = QTextEdit()
-        self._description.setPlaceholderText(t("marker_description_hint"))
-        if correction is not None:
-            self._description.setPlainText(correction.text)
-        layout.addWidget(self._description)
-
-        self._error = QLabel()
-        self._error.setStyleSheet(f"color:{C['alarm']};")
-        layout.addWidget(self._error)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Save).setText(t("svc_dlg_save"))
-        buttons.button(QDialogButtonBox.Cancel).setText(t("svc_dlg_cancel"))
-        buttons.accepted.connect(self._validate)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        selected_type = correction.event_type if correction is not None else None
+        for index, (event_type, text_key) in enumerate(_TYPE_BUTTONS):
+            button = QPushButton(t(text_key))
+            button.setMinimumHeight(105)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setProperty("event_type", event_type)
+            if event_type == selected_type:
+                button.setStyleSheet(
+                    f"border-color:{C['blue_light']}; background:{C['blue_dark']};"
+                )
+            button.clicked.connect(
+                lambda _checked=False, value=event_type: self._select(value)
+            )
+            grid.addWidget(button, index // 2, index % 2)
 
     def values(self) -> MarkerDialogValues:
         return MarkerDialogValues(
-            event_type=str(self._type.currentData()),
-            description=self._description.toPlainText().strip(),
-            author=self._author.text().strip(),
+            event_type=self._event_type,
+            description="",
+            author=self._author,
         )
 
-    def _validate(self) -> None:
-        values = self.values()
-        if not values.author:
-            self._error.setText(t("marker_required"))
-            return
+    def _select(self, event_type: str) -> None:
+        self._event_type = event_type
         self.accept()
 
 

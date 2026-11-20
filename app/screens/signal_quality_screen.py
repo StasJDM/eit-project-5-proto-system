@@ -18,6 +18,7 @@ from ..styles import C, FONT_BASE, FONT_LABEL, FONT_SMALL, FONT_BTN
 from ..i18n import t, i18n
 from ..session_timers import SessionTimers
 from ..widgets.duration_counters import DurationCounterBar
+from ..widgets.chart_zoom import attach_chart_zoom
 
 # ── Mock signal levels (0.0 – 1.0) for electrodes 1-16 ──────────────────────
 _SIGNAL: list[float] = [
@@ -153,6 +154,7 @@ class _BarChart(QWidget):
             f"background-color:{C['bg_wave']};"
             f"border:1px solid {C['border']};border-radius:4px;"
         )
+        attach_chart_zoom(self)
 
     def paintEvent(self, _event):
         p = QPainter(self)

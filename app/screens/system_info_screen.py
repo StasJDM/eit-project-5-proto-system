@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QDialog, QButtonGroup, QRadioButton, QTabWidget, QGridLayout,
     QCheckBox, QSpinBox, QGroupBox, QScrollArea, QComboBox, QStackedWidget,
-    QSlider,
+    QSlider, QColorDialog,
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QValidator
+from PySide6.QtGui import QColor, QValidator
 
 from ..config import AppConfig, DataMode
 from ..application import (
@@ -21,15 +21,21 @@ from ..application import (
     INTERFACE_TABS,
     REQUIRED_INTERFACE_TABS,
     MAX_GRAPH_DISPLAY_PERIOD_SECONDS,
+    MAX_ROI_COUNT,
     MIN_GRAPH_DISPLAY_PERIOD_SECONDS,
     MIN_PEEP_ANALYSIS_INTERVAL_SECONDS,
     MAX_PEEP_ANALYSIS_INTERVAL_SECONDS,
     MIN_PEEP_SILENT_THRESHOLD_PERCENT,
     MAX_PEEP_SILENT_THRESHOLD_PERCENT,
+    MIN_TREND_DECIMAL_PLACES,
+    MAX_TREND_DECIMAL_PLACES,
+    DEFAULT_APPLICATION_BACKGROUND_COLOR,
     EngineeringSettings,
     EngineeringSettingsService,
 )
-from ..styles import C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_BTN
+from ..styles import (
+    C, FONT_BASE, FONT_SMALL, FONT_TITLE, FONT_LABEL, FONT_VALUE, FONT_BTN,
+)
 from ..i18n import t, i18n, LANGUAGES
 from ..widgets.section_profile_editor import SectionProfileEditor
 
@@ -205,9 +211,11 @@ _ROW_H = 48
 _NUM_W = 56
 _INTERFACE_TAB_KEYS = {
     "main": "nav_main",
+    "express_monitoring": "nav_express_monitoring",
     "patient": "nav_patient",
     "trends": "nav_trends",
     "analysis": "nav_analysis",
+    "peep": "nav_peep",
     "eit_settings": "nav_eit_settings",
     "reports": "nav_reports",
     "export": "nav_export",
@@ -220,6 +228,56 @@ _ELEMENT_LABEL_KEYS = {
     for elements in INTERFACE_ELEMENTS.values()
     for element in elements
 }
+
+_ENGINEERING_REFERENCE_ITEMS = (
+    ("marker_chart_prefix", "", "sys_reference_event"),
+    ("", "ΔZ", "sys_reference_delta_z"),
+    ("", "σ", "sys_reference_conductivity"),
+    ("", "EELI", "sys_reference_eeli"),
+    ("", "EILI", "sys_reference_eili"),
+    ("", "TVi", "sys_reference_tvi"),
+    ("", "MVi", "sys_reference_mvi"),
+    ("", "RR / ЧД", "sys_reference_rr"),
+    ("", "R/L", "sys_reference_rl"),
+    ("", "V/D", "sys_reference_vd"),
+    ("", "ROI", "sys_reference_roi"),
+    ("", "N, %", "sys_reference_n_percent"),
+    ("", "PEEP", "sys_reference_peep"),
+    ("", "RTS", "sys_reference_rts"),
+    ("", "CoV", "sys_reference_cov"),
+    ("", "DSS / NSS", "sys_reference_silent_spaces"),
+    ("", "FLS", "sys_reference_fls"),
+    ("", "BB / TB", "sys_reference_trend_points"),
+    ("", "AU / a.u.", "sys_reference_au"),
+)
+
+_BASE_TREND_VISIBILITY_ITEMS = (
+    ("eeli_au", "EELI"),
+    ("eili_au", "EILI"),
+    ("tvi_au", "TVi"),
+    ("mli_au", "MLI"),
+    ("mvi_au_per_min", "MVi"),
+    ("rr_bpm", "RR / ЧД"),
+    ("right_left_ratio", "R/L"),
+    ("ventral_dorsal_ratio", "V/D"),
+    ("right_percent", "R, %"),
+    ("left_percent", "L, %"),
+)
+
+
+def _trend_visibility_items(roi_count: int) -> tuple[tuple[str, str], ...]:
+    return _BASE_TREND_VISIBILITY_ITEMS + tuple(
+        item
+        for index in range(1, roi_count + 1)
+        for item in (
+            (f"roi_{index}_tvi_au", f"TVi ROI {index}"),
+            (f"roi_{index}_percent", f"ROI {index}, %"),
+        )
+    )
+
+
+def _aeration_visibility_items(roi_count: int) -> tuple[tuple[str, str], ...]:
+    return (("total_percent", "T, %"),) + _trend_visibility_items(roi_count)
 
 
 def _single_line_tab_text(tab: str) -> str:
@@ -239,8 +297,8 @@ def _engineering_tabs_style() -> str:
             color: {C['text_dim']};
             border: 1px solid {C['border']};
             border-bottom: none;
-            padding: 9px 22px;
-            min-width: 150px;
+            padding: 9px 10px;
+            min-width: 105px;
             min-height: 24px;
             font-size: {FONT_BASE}px;
             font-weight: 500;
@@ -328,14 +386,14 @@ class SystemInfoScreen(QWidget):
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(40, 30, 40, 30)
-        outer.setSpacing(16)
+        outer.setContentsMargins(24, 14, 24, 14)
+        outer.setSpacing(10)
 
         # Screen title
         self._lbl_title = QLabel(t("screen_system"))
         self._lbl_title.setAlignment(Qt.AlignCenter)
         self._lbl_title.setStyleSheet(
-            f"color:{C['text']};font-size:26px;font-weight:bold;background:transparent;"
+            f"color:{C['text']};font-size:22px;font-weight:bold;background:transparent;"
         )
         outer.addWidget(self._lbl_title)
 
@@ -407,6 +465,8 @@ class SystemInfoScreen(QWidget):
         self._engineering_peep_tab = QWidget()
         self._engineering_visibility_tab = QWidget()
         self._engineering_section_tab = QWidget()
+        self._engineering_appearance_tab = QWidget()
+        self._engineering_reference_tab = QWidget()
         self._engineering_sections.addTab(
             self._engineering_general_tab, t("sys_engineering_tab_general")
         )
@@ -421,6 +481,12 @@ class SystemInfoScreen(QWidget):
         )
         self._engineering_sections.addTab(
             self._engineering_section_tab, t("sys_engineering_tab_section")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_appearance_tab, t("sys_engineering_tab_appearance")
+        )
+        self._engineering_sections.addTab(
+            self._engineering_reference_tab, t("sys_engineering_tab_reference")
         )
         outer.addWidget(self._engineering_sections, stretch=1)
 
@@ -549,6 +615,8 @@ class SystemInfoScreen(QWidget):
         self._build_peep_configuration_tab()
         self._build_visibility_tab()
         self._build_section_configuration_tab()
+        self._build_appearance_configuration_tab()
+        self._build_reference_tab()
 
         button_row = QHBoxLayout()
         button_row.addStretch()
@@ -586,6 +654,12 @@ class SystemInfoScreen(QWidget):
         self._engineering_apply.clicked.connect(self._save_engineering_settings)
         button_row.addWidget(self._engineering_apply)
         outer.addLayout(button_row)
+        self._engineering_sections.currentChanged.connect(
+            self._sync_engineering_action_visibility
+        )
+        self._sync_engineering_action_visibility(
+            self._engineering_sections.currentIndex()
+        )
         self._section_profile_editor.dirty_changed.connect(
             self._on_section_dirty_changed
         )
@@ -598,9 +672,34 @@ class SystemInfoScreen(QWidget):
         self._load_engineering_settings(current)
 
     def _build_trends_configuration_tab(self) -> None:
-        layout = QVBoxLayout(self._engineering_trends_tab)
+        outer = QVBoxLayout(self._engineering_trends_tab)
+        outer.setContentsMargins(0, 0, 0, 0)
+        trend_scroll = QScrollArea()
+        trend_scroll.setObjectName("engineering_trend_settings_scroll")
+        trend_scroll.setWidgetResizable(True)
+        trend_scroll.setFrameShape(QFrame.NoFrame)
+        trend_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        trend_scroll.setStyleSheet(f"""
+            QScrollBar:vertical {{
+                background:{C['bg_panel']};width:22px;margin:0;
+            }}
+            QScrollBar::handle:vertical {{
+                background:{C['border_light']};min-height:48px;border-radius:8px;
+                margin:2px 4px;
+            }}
+            QScrollBar::handle:vertical:pressed {{ background:{C['blue_light']}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background:transparent;
+            }}
+        """)
+        outer.addWidget(trend_scroll)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
+        trend_scroll.setWidget(content)
 
         chart_row = QHBoxLayout()
         self._trend_chart_mode_label = QLabel(
@@ -614,6 +713,21 @@ class SystemInfoScreen(QWidget):
         chart_row.addWidget(self._trend_chart_mode_combo)
         chart_row.addStretch()
         layout.addLayout(chart_row)
+
+        rounding_row = QHBoxLayout()
+        self._trend_rounding_label = QLabel(
+            t("sys_engineering_trend_rounding")
+        )
+        rounding_row.addWidget(self._trend_rounding_label)
+        self._trend_rounding_spin = QSpinBox()
+        self._trend_rounding_spin.setRange(
+            MIN_TREND_DECIMAL_PLACES, MAX_TREND_DECIMAL_PLACES
+        )
+        self._trend_rounding_spin.setSingleStep(1)
+        self._trend_rounding_spin.setMinimumSize(140, 48)
+        rounding_row.addWidget(self._trend_rounding_spin)
+        rounding_row.addStretch()
+        layout.addLayout(rounding_row)
 
         point_row = QHBoxLayout()
         self._trend_point_mode_label = QLabel(t("sys_engineering_trend_point_mode"))
@@ -656,7 +770,164 @@ class SystemInfoScreen(QWidget):
         self._trend_configuration_hint.setWordWrap(True)
         self._trend_configuration_hint.setStyleSheet(f"color:{C['text_dim']};")
         layout.addWidget(self._trend_configuration_hint)
+
+        self._trend_visibility_title = QLabel(
+            t("sys_engineering_trend_visibility")
+        )
+        self._trend_visibility_title.setStyleSheet(
+            f"color:{C['text']};font-size:{FONT_LABEL}px;font-weight:bold;"
+        )
+        layout.addWidget(self._trend_visibility_title)
+
+        self._trend_visibility_hint = QLabel(
+            t("sys_engineering_trend_visibility_hint")
+        )
+        self._trend_visibility_hint.setWordWrap(True)
+        self._trend_visibility_hint.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;"
+        )
+        layout.addWidget(self._trend_visibility_hint)
+
+        self._trend_visibility_group = QGroupBox()
+        self._trend_visibility_group.setStyleSheet(f"""
+            QGroupBox {{
+                border:1px solid {C['blue_light']};border-radius:7px;
+                margin-top:0;padding-top:10px;
+            }}
+        """)
+        self._trend_visibility_grid = QGridLayout(self._trend_visibility_group)
+        self._trend_visibility_grid.setContentsMargins(12, 14, 12, 14)
+        self._trend_visibility_grid.setHorizontalSpacing(12)
+        self._trend_visibility_grid.setVerticalSpacing(10)
+        self._trend_visibility_checks: dict[str, QCheckBox] = {}
+        self._hidden_trend_metrics_draft: set[str] = set()
+        self._rebuild_trend_visibility_checks(self._roi_spin.value())
+        self._roi_spin.valueChanged.connect(self._rebuild_trend_visibility_checks)
+        layout.addWidget(self._trend_visibility_group)
         layout.addStretch()
+
+    def _capture_trend_visibility_draft(self) -> None:
+        for code, checkbox in self._trend_visibility_checks.items():
+            if checkbox.isChecked():
+                self._hidden_trend_metrics_draft.discard(code)
+            else:
+                self._hidden_trend_metrics_draft.add(code)
+
+    def _rebuild_trend_visibility_checks(self, roi_count: int) -> None:
+        self._capture_trend_visibility_draft()
+        while self._trend_visibility_grid.count():
+            item = self._trend_visibility_grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().hide()
+                item.widget().deleteLater()
+        self._trend_visibility_checks = {}
+        for index, (code, label) in enumerate(_trend_visibility_items(roi_count)):
+            checkbox = QCheckBox(label)
+            checkbox.setMinimumHeight(44)
+            checkbox.setStyleSheet(_visibility_checkbox_style())
+            checkbox.setChecked(code not in self._hidden_trend_metrics_draft)
+            self._trend_visibility_grid.addWidget(checkbox, index // 3, index % 3)
+            self._trend_visibility_checks[code] = checkbox
+
+    def _selected_hidden_trend_metrics(self) -> tuple[str, ...]:
+        self._capture_trend_visibility_draft()
+        return tuple(
+            code
+            for code, _label in _trend_visibility_items(MAX_ROI_COUNT)
+            if code in self._hidden_trend_metrics_draft
+        )
+
+    def _build_reference_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_reference_tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("engineering_reference_scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"""
+            QScrollBar:vertical {{
+                background:{C['bg_panel']};width:22px;margin:0;
+            }}
+            QScrollBar::handle:vertical {{
+                background:{C['border_light']};min-height:48px;border-radius:8px;
+                margin:2px 4px;
+            }}
+            QScrollBar::handle:vertical:pressed {{ background:{C['blue_light']}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background:transparent;
+            }}
+        """)
+        layout.addWidget(scroll)
+
+        content = QWidget()
+        content.setObjectName("engineering_reference_content")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 20, 24, 24)
+        content_layout.setSpacing(10)
+
+        self._reference_title = QLabel(t("sys_reference_title"))
+        self._reference_title.setStyleSheet(
+            f"color:{C['text']};font-size:{FONT_TITLE}px;font-weight:bold;"
+        )
+        content_layout.addWidget(self._reference_title)
+
+        self._reference_hint = QLabel(t("sys_reference_hint"))
+        self._reference_hint.setWordWrap(True)
+        self._reference_hint.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;"
+        )
+        content_layout.addWidget(self._reference_hint)
+
+        self._reference_rows: list[tuple[str, str, str, QLabel, QLabel]] = []
+        for code_key, static_code, description_key in _ENGINEERING_REFERENCE_ITEMS:
+            row = QFrame()
+            row.setObjectName("engineering_reference_row")
+            row.setMinimumHeight(64)
+            row.setStyleSheet(f"""
+                QFrame#engineering_reference_row {{
+                    background:{C['bg_card']};border:1px solid {C['border']};
+                    border-radius:7px;
+                }}
+                QFrame#engineering_reference_row QLabel {{
+                    background:transparent;border:none;
+                }}
+            """)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(16, 10, 16, 10)
+            row_layout.setSpacing(18)
+
+            code_label = QLabel(t(code_key) if code_key else static_code)
+            code_label.setMinimumWidth(150)
+            code_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            code_label.setStyleSheet(
+                f"color:{C['blue_light']};font-size:{FONT_VALUE}px;font-weight:bold;"
+            )
+            description_label = QLabel(t(description_key))
+            description_label.setWordWrap(True)
+            description_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            description_label.setStyleSheet(
+                f"color:{C['text']};font-size:{FONT_LABEL}px;"
+            )
+            row_layout.addWidget(code_label)
+            row_layout.addWidget(description_label, stretch=1)
+            content_layout.addWidget(row)
+            self._reference_rows.append(
+                (code_key, static_code, description_key, code_label, description_label)
+            )
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+
+    def _sync_engineering_action_visibility(self, index: int) -> None:
+        reference_selected = (
+            self._engineering_sections.widget(index)
+            is self._engineering_reference_tab
+        )
+        self._section_save.setVisible(not reference_selected)
+        self._engineering_apply.setVisible(not reference_selected)
 
     def _build_peep_configuration_tab(self) -> None:
         layout = QVBoxLayout(self._engineering_peep_tab)
@@ -751,6 +1022,37 @@ class SystemInfoScreen(QWidget):
             self._tab_visibility_checks[tab] = checkbox
         layout.addWidget(self._navigation_visibility_group)
 
+        self._aeration_visibility_group = QGroupBox(
+            t("sys_engineering_aeration_visibility")
+        )
+        self._aeration_visibility_group.setStyleSheet(
+            f"QGroupBox {{ border:1px solid {C['blue_light']}; border-radius:8px; "
+            f"margin-top:12px; padding-top:10px; font-weight:bold; }} "
+            f"QGroupBox::title {{ subcontrol-origin:margin; left:14px; padding:0 6px; }}"
+        )
+        aeration_group_layout = QVBoxLayout(self._aeration_visibility_group)
+        aeration_group_layout.setContentsMargins(14, 20, 14, 14)
+        aeration_group_layout.setSpacing(10)
+        self._aeration_visibility_hint = QLabel(
+            t("sys_engineering_aeration_visibility_hint")
+        )
+        self._aeration_visibility_hint.setWordWrap(True)
+        self._aeration_visibility_hint.setStyleSheet(
+            f"color:{C['text_dim']};font-size:{FONT_SMALL}px;"
+        )
+        aeration_group_layout.addWidget(self._aeration_visibility_hint)
+        self._aeration_visibility_grid = QGridLayout()
+        self._aeration_visibility_grid.setHorizontalSpacing(10)
+        self._aeration_visibility_grid.setVerticalSpacing(10)
+        aeration_group_layout.addLayout(self._aeration_visibility_grid)
+        self._aeration_visibility_checks: dict[str, QCheckBox] = {}
+        self._hidden_aeration_metrics_draft: set[str] = set()
+        self._rebuild_aeration_visibility_checks(self._roi_spin.value())
+        self._roi_spin.valueChanged.connect(
+            self._rebuild_aeration_visibility_checks
+        )
+        layout.addWidget(self._aeration_visibility_group)
+
         self._element_visibility_group = QGroupBox(
             t("sys_engineering_element_visibility")
         )
@@ -818,12 +1120,46 @@ class SystemInfoScreen(QWidget):
         # Backward-compatible aliases used by older integrations and tests.
         self._show_main_trends_check = self._element_visibility_checks["main.trends"]
         self._show_main_tvi_check = self._element_visibility_checks["main.tvi"]
-        peep_element_check = self._element_visibility_checks["analysis.peep_tab"]
         self._peep_tab_visibility_check.toggled.connect(
-            peep_element_check.setChecked
+            self._tab_visibility_checks["peep"].setChecked
         )
-        peep_element_check.toggled.connect(
+        self._tab_visibility_checks["peep"].toggled.connect(
             self._peep_tab_visibility_check.setChecked
+        )
+
+    def _capture_aeration_visibility_draft(self) -> None:
+        for code, checkbox in self._aeration_visibility_checks.items():
+            if checkbox.isChecked():
+                self._hidden_aeration_metrics_draft.discard(code)
+            else:
+                self._hidden_aeration_metrics_draft.add(code)
+
+    def _rebuild_aeration_visibility_checks(self, roi_count: int) -> None:
+        self._capture_aeration_visibility_draft()
+        while self._aeration_visibility_grid.count():
+            item = self._aeration_visibility_grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().hide()
+                item.widget().deleteLater()
+        self._aeration_visibility_checks = {}
+        for index, (code, label) in enumerate(
+            _aeration_visibility_items(roi_count)
+        ):
+            checkbox = QCheckBox(label)
+            checkbox.setMinimumHeight(44)
+            checkbox.setStyleSheet(_visibility_checkbox_style())
+            checkbox.setChecked(code not in self._hidden_aeration_metrics_draft)
+            self._aeration_visibility_grid.addWidget(
+                checkbox, index // 3, index % 3
+            )
+            self._aeration_visibility_checks[code] = checkbox
+
+    def _selected_hidden_aeration_metrics(self) -> tuple[str, ...]:
+        self._capture_aeration_visibility_draft()
+        return tuple(
+            code
+            for code, _label in _aeration_visibility_items(MAX_ROI_COUNT)
+            if code in self._hidden_aeration_metrics_draft
         )
 
     def _build_section_configuration_tab(self) -> None:
@@ -832,11 +1168,47 @@ class SystemInfoScreen(QWidget):
         self._section_profile_editor = SectionProfileEditor()
         layout.addWidget(self._section_profile_editor)
 
+    def _build_appearance_configuration_tab(self) -> None:
+        layout = QVBoxLayout(self._engineering_appearance_tab)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
+        background_row = QHBoxLayout()
+        self._background_color_label = QLabel(
+            t("sys_engineering_background_color")
+        )
+        background_row.addWidget(self._background_color_label)
+        self._background_color_button = QPushButton()
+        self._background_color_button.setMinimumSize(220, 48)
+        self._background_color_button.clicked.connect(
+            self._choose_background_color
+        )
+        background_row.addWidget(self._background_color_button)
+        self._background_color_reset = QPushButton(
+            t("sys_engineering_background_reset")
+        )
+        self._background_color_reset.setMinimumSize(220, 48)
+        self._background_color_reset.clicked.connect(
+            lambda: self._set_background_color(
+                DEFAULT_APPLICATION_BACKGROUND_COLOR
+            )
+        )
+        background_row.addWidget(self._background_color_reset)
+        background_row.addStretch()
+        layout.addLayout(background_row)
+        self._waveform_fill_check = QCheckBox(t("sys_engineering_waveform_fill"))
+        self._waveform_fill_check.setStyleSheet(
+            _visibility_checkbox_style() + "QCheckBox { min-height: 30px; }"
+        )
+        layout.addWidget(self._waveform_fill_check)
+        layout.addStretch()
+
     def _load_engineering_settings(self, settings: EngineeringSettings) -> None:
         for mode, checkbox in self._mode_checks.items():
             checkbox.setChecked(mode in settings.work_modes)
         self._roi_spin.setValue(settings.roi_count)
         self._graph_period_slider.setValue(settings.graph_display_period_seconds)
+        self._set_background_color(settings.application_background_color)
+        self._waveform_fill_check.setChecked(settings.waveform_fill_enabled)
         detector_index = self._peak_detector_combo.findData(
             settings.peak_detection_method
         )
@@ -855,6 +1227,13 @@ class SystemInfoScreen(QWidget):
             settings.trend_chart_mode
         )
         self._trend_chart_mode_combo.setCurrentIndex(max(0, chart_mode_index))
+        self._trend_rounding_spin.setValue(settings.trend_decimal_places)
+        self._hidden_trend_metrics_draft = set(settings.hidden_trend_metrics)
+        self._rebuild_trend_visibility_checks(settings.roi_count)
+        self._hidden_aeration_metrics_draft = set(
+            settings.hidden_aeration_metrics
+        )
+        self._rebuild_aeration_visibility_checks(settings.roi_count)
         downsampling_index = self._trend_downsampling_combo.findData(
             settings.trend_downsampling_mode
         )
@@ -869,7 +1248,7 @@ class SystemInfoScreen(QWidget):
         for element, checkbox in self._element_visibility_checks.items():
             checkbox.setChecked(settings.is_element_visible(element))
         self._peep_tab_visibility_check.setChecked(
-            settings.is_element_visible("analysis.peep_tab")
+            "peep" in settings.visible_tabs
         )
         self._section_profile_editor.load(
             settings.section_profile, settings.custom_section_profiles
@@ -891,12 +1270,17 @@ class SystemInfoScreen(QWidget):
             breathing_identification_method=str(
                 self._breathing_identification_combo.currentData()
             ),
+            application_background_color=self._selected_background_color,
+            waveform_fill_enabled=self._waveform_fill_check.isChecked(),
             graph_display_period_seconds=self._graph_period_slider.value(),
             trend_point_mode=str(self._trend_point_mode_combo.currentData()),
             trend_downsampling_mode=str(
                 self._trend_downsampling_combo.currentData()
             ),
             trend_chart_mode=str(self._trend_chart_mode_combo.currentData()),
+            trend_decimal_places=self._trend_rounding_spin.value(),
+            hidden_trend_metrics=self._selected_hidden_trend_metrics(),
+            hidden_aeration_metrics=self._selected_hidden_aeration_metrics(),
             peep_silent_threshold_percent=self._peep_threshold_spin.value(),
             peep_analysis_interval_seconds=self._peep_interval_spin.value(),
             peep_gravity_angle_degrees=self._peep_gravity_spin.value(),
@@ -940,6 +1324,32 @@ class SystemInfoScreen(QWidget):
         value = self._graph_period_slider.value() if seconds is None else seconds
         self._graph_period_value.setText(
             t("sys_engineering_graph_period_value").format(seconds=value)
+        )
+
+    def _choose_background_color(self) -> None:
+        selected = QColorDialog.getColor(
+            QColor(self._selected_background_color),
+            self,
+            t("sys_engineering_background_picker_title"),
+        )
+        if selected.isValid():
+            self._set_background_color(selected.name())
+
+    def _set_background_color(self, color: str) -> None:
+        normalized = QColor(color).name()
+        if not QColor(color).isValid():
+            normalized = DEFAULT_APPLICATION_BACKGROUND_COLOR
+        self._selected_background_color = normalized
+        swatch = QColor(normalized)
+        text_color = "#101820" if swatch.lightness() >= 140 else "#ffffff"
+        self._background_color_button.setText(normalized.upper())
+        self._background_color_button.setStyleSheet(
+            f"background-color:{normalized};color:{text_color};"
+            f"border:2px solid {C['border_light']};border-radius:6px;"
+            f"font-size:{FONT_BTN}px;font-weight:bold;min-height:44px;"
+        )
+        self._background_color_reset.setEnabled(
+            normalized != DEFAULT_APPLICATION_BACKGROUND_COLOR
         )
 
     # ── Row builders ──────────────────────────────────────────────────────────
@@ -1082,6 +1492,19 @@ class SystemInfoScreen(QWidget):
         self._engineering_sections.setTabText(2, t("sys_engineering_tab_peep"))
         self._engineering_sections.setTabText(3, t("sys_engineering_tab_visibility"))
         self._engineering_sections.setTabText(4, t("sys_engineering_tab_section"))
+        self._engineering_sections.setTabText(
+            5, t("sys_engineering_tab_appearance")
+        )
+        self._engineering_sections.setTabText(
+            6, t("sys_engineering_tab_reference")
+        )
+        self._reference_title.setText(t("sys_reference_title"))
+        self._reference_hint.setText(t("sys_reference_hint"))
+        for (
+            code_key, static_code, description_key, code_label, description_label,
+        ) in self._reference_rows:
+            code_label.setText(t(code_key) if code_key else static_code)
+            description_label.setText(t(description_key))
         self._section_profile_editor.retranslate()
         self._mode_group.setTitle(t("sys_engineering_modes"))
         for mode, key in (
@@ -1092,6 +1515,13 @@ class SystemInfoScreen(QWidget):
             self._mode_checks[mode].setText(t(key))
         self._roi_label.setText(t("sys_engineering_roi_count"))
         self._graph_period_label.setText(t("sys_engineering_graph_period"))
+        self._background_color_label.setText(
+            t("sys_engineering_background_color")
+        )
+        self._background_color_reset.setText(
+            t("sys_engineering_background_reset")
+        )
+        self._waveform_fill_check.setText(t("sys_engineering_waveform_fill"))
         self._update_graph_period_value()
         self._peak_detector_label.setText(t("sys_engineering_peak_detector"))
         self._peak_detector_combo.setItemText(
@@ -1114,6 +1544,19 @@ class SystemInfoScreen(QWidget):
         )
         self._trend_chart_mode_combo.setItemText(0, t("sys_trend_chart_bars"))
         self._trend_chart_mode_combo.setItemText(1, t("sys_trend_chart_lines"))
+        self._trend_rounding_label.setText(t("sys_engineering_trend_rounding"))
+        self._trend_visibility_title.setText(
+            t("sys_engineering_trend_visibility")
+        )
+        self._trend_visibility_hint.setText(
+            t("sys_engineering_trend_visibility_hint")
+        )
+        self._aeration_visibility_group.setTitle(
+            t("sys_engineering_aeration_visibility")
+        )
+        self._aeration_visibility_hint.setText(
+            t("sys_engineering_aeration_visibility_hint")
+        )
         self._trend_point_mode_combo.setItemText(0, t("sys_trend_points_interval"))
         self._trend_point_mode_combo.setItemText(
             1, t("sys_trend_points_breath_cycle")

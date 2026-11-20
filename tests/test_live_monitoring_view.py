@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QImage
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtTest import QTest
 
 from app.application import (
@@ -278,15 +278,55 @@ class LiveMonitoringViewTest(unittest.TestCase):
             panel.close()
 
     def test_new_event_at_filter_boundary_remains_visible_on_waveform(self):
-        marker = SimpleNamespace(position_seconds=0.25, event_type="cough")
+        marker = SimpleNamespace(
+            position_seconds=0.25, event_type="cough", corrects_event_id=None,
+        )
 
         self.assertEqual(
             _relative_markers((marker,), (0.0,)),
-            ((1.0, "cough"),),
+            ((1.0, "С1"),),
         )
         self.assertEqual(
             _relative_markers((marker,), (0.28, 0.32)),
-            ((0.0, "cough"),),
+            ((0.0, "С1"),),
+        )
+
+    def test_lung_visualization_uses_prominent_scaling_outer_contour(self):
+        self.assertEqual(LungVizWidget._thorax_contour_width(150), 3.0)
+        self.assertEqual(LungVizWidget._thorax_contour_width(600), 5.0)
+
+    def test_lung_visualization_uses_large_landmarks_and_patient_table(self):
+        widget = LungVizWidget()
+        try:
+            widget.resize(500, 420)
+            self.assertEqual(widget._orientation_font_size(150, True), 15)
+            self.assertEqual(widget._orientation_font_size(360, False), 20)
+            self.assertEqual(widget._orientation_font_size(600, False), 28)
+
+            map_rect = QRectF(100, 70, 300, 280)
+            landmarks = dict(widget._orientation_rects(map_rect, compact=False))
+            self.assertLess(landmarks["L"].right(), map_rect.left())
+            self.assertLess(landmarks["V"].bottom(), map_rect.top())
+            self.assertGreater(landmarks["R"].left(), map_rect.right())
+            self.assertGreater(landmarks["D"].top(), map_rect.bottom())
+
+            table_rect = widget._patient_table_rect(map_rect, compact=False)
+            self.assertFalse(table_rect.isEmpty())
+            self.assertGreater(table_rect.top(), landmarks["D"].bottom())
+            self.assertLess(table_rect.bottom(), widget.height() - 16)
+            self.assertGreaterEqual(table_rect.width(), map_rect.width() * 0.75)
+            self.assertEqual(table_rect.height(), 7)
+        finally:
+            widget.close()
+
+    def test_event_labels_are_sequential_and_corrections_do_not_duplicate_lines(self):
+        first = SimpleNamespace(position_seconds=1.0, corrects_event_id=None)
+        correction = SimpleNamespace(position_seconds=1.0, corrects_event_id="first")
+        second = SimpleNamespace(position_seconds=2.0, corrects_event_id=None)
+
+        self.assertEqual(
+            _relative_markers((first, correction, second), (0.0, 3.0)),
+            ((1 / 3, "С1"), (2 / 3, "С2")),
         )
 
 

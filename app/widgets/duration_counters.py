@@ -23,6 +23,8 @@ class DurationCounter(QWidget):
         label_key: str,
         stacked: bool = False,
         large: bool = False,
+        single_line_label: bool = False,
+        label_font_size: int | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -42,8 +44,11 @@ class DurationCounter(QWidget):
             label_font = _LABEL_FONT
             value_font = _VALUE_FONT
 
+        if label_font_size is not None:
+            label_font = int(label_font_size)
+
         self._lbl = QLabel(t(label_key))
-        self._lbl.setWordWrap(stacked)
+        self._lbl.setWordWrap(stacked and not single_line_label)
         if stacked:
             self._lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._lbl.setStyleSheet(
@@ -80,6 +85,8 @@ class DurationCounterPair(QWidget):
         stacked: bool = False,
         large: bool = False,
         horizontal: bool = False,
+        single_line_labels: bool = False,
+        label_font_size: int | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -87,8 +94,20 @@ class DurationCounterPair(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(24 if horizontal else 4)
 
-        self.cnt_eit = DurationCounter("param_eit_duration", stacked=stacked, large=large)
-        self.cnt_es = DurationCounter("param_es_time", stacked=stacked, large=large)
+        self.cnt_eit = DurationCounter(
+            "param_eit_duration",
+            stacked=stacked,
+            large=large,
+            single_line_label=single_line_labels,
+            label_font_size=label_font_size,
+        )
+        self.cnt_es = DurationCounter(
+            "param_es_time",
+            stacked=stacked,
+            large=large,
+            single_line_label=single_line_labels,
+            label_font_size=label_font_size,
+        )
         lay.addWidget(self.cnt_eit)
         lay.addWidget(self.cnt_es)
 

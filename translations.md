@@ -33,6 +33,12 @@
 |---|---|---|---|---|
 | **Приложение** | | | | |
 | `app_title` | ЭИТ — Монитор пациента | EIT — Patient Monitor | EIT — 患者监护仪 | EIT — Màn hình bệnh nhân |
+| `chart_magnifier` | Увеличить график | Magnify chart | 放大图表 | Phóng to biểu đồ |
+| `chart_zoom_title` | Увеличенный график | Magnified chart | 放大的图表 | Biểu đồ phóng to |
+| `chart_zoom_in` | Увеличить масштаб | Zoom in | 放大 | Phóng to |
+| `chart_zoom_out` | Уменьшить масштаб | Zoom out | 缩小 | Thu nhỏ |
+| `chart_zoom_reset` | 100% | 100% | 100% | 100% |
+| `chart_zoom_close` | Закрыть увеличенный график | Close magnified chart | 关闭放大的图表 | Đóng biểu đồ phóng to |
 | **Верхняя панель (HeaderBar)** | | | | |
 | `hdr_adult` | 👤 Взрослый | 👤 Adult | 👤 成人 | 👤 Người lớn |
 | `hdr_alarm` | ⚠  СИГНАЛ ТРЕВОГИ | ⚠  ALARM | ⚠  警报 | ⚠  BÁO ĐỘNG |
@@ -43,6 +49,7 @@
 | `hdr_playback` | АРХИВ | REPLAY | 回放 | PHÁT LẠI |
 | **Навигационная панель (NavPanel)** | | | | |
 | `nav_analysis` | 🔬  Анализ | 🔬  Analysis | 🔬  分析 | 🔬  Phân tích |
+| `nav_peep` | PEEP | PEEP | PEEP | PEEP |
 | `nav_debug` | 🛠  Отладка и Тестирование | 🛠  Debug & Testing | 🛠  调试与 测试 | 🛠  Gỡ lỗi & Kiểm tra |
 | `nav_eit_settings` | ⚙  Настройки ЭИТ | ⚙  EIT Settings | ⚙  EIT 设置 | ⚙  Cài đặt EIT |
 | `nav_export` | 💾  Экспорт данных | 💾  Export data | 💾  导出 数据 | 💾  Xuất dữ liệu |
@@ -57,6 +64,8 @@
 | `lung_breath_cycle` | Дыхательный цикл | Breathing cycle | 呼吸周期 | Chu kỳ thở |
 | `lung_reconstruction_map` | Карта реконструкции ΔZ | Reconstructed ΔZ map | 重建 ΔZ 图 | Bản đồ tái tạo ΔZ |
 | `lung_reconstruction_tooltip` | Каждая ячейка соответствует одному элементу реконструкции | Each cell represents one reconstruction element | 每个单元格对应一个重建元素 | Mỗi ô tương ứng với một phần tử tái tạo |
+| `lung_fullscreen_open_tooltip` | Нажмите, чтобы развернуть на всё окно | Tap to expand to the whole window | 点击展开至整个窗口 | Chạm để mở rộng ra toàn cửa sổ |
+| `lung_fullscreen_close` | Закрыть развёрнутый просмотр | Close expanded view | 关闭展开视图 | Đóng chế độ xem mở rộng |
 | **Панель кривых (WaveformPanel)** | | | | |
 | `wave_event_marker` | ⚑  МАРКЕР СОБЫТИЙ | ⚑  EVENT MARKER | ⚑  事件标记 | ⚑  ĐÁNH DẤU SỰ KIỆN |
 | `wave_l_label` | L  Левое лёгкое | L  Left lung | L  左肺 | L  Phổi trái |
@@ -340,9 +349,49 @@
 | `sys_element_main_mvi` | Отображать MVi | Show MVi | 显示 MVi | Hiển thị MVi |
 | `sys_engineering_graph_period` | Период отображения данных на графиках: | Data display period on charts: | 图表数据的显示时段： | Khoảng thời gian hiển thị dữ liệu trên biểu đồ: |
 | `sys_engineering_graph_period_value` | {seconds} с | {seconds} s | {seconds} 秒 | {seconds} giây |
-| `sys_engineering_peep_tab_visibility` | Показывать вкладку PEEP в разделе «Анализ» | Show the PEEP tab in Analysis | 在分析中显示 PEEP 选项卡 | Hiển thị thẻ PEEP trong phần Phân tích |
+| `sys_engineering_tab_appearance` | Внешний вид | Appearance | 外观 | Giao diện |
+| `sys_engineering_tab_reference` | Справка | Reference | 参考 | Tham khảo |
+| `sys_reference_title` | Обозначения и сокращения | Symbols and abbreviations | 符号和缩写 | Ký hiệu và chữ viết tắt |
+| `sys_reference_hint` | Краткая расшифровка обозначений, используемых на экранах мониторинга, анализа и трендов. | A quick reference for symbols used on monitoring, analysis, and trend screens. | 监测、分析和趋势界面中所用符号的简要说明。 | Giải thích nhanh các ký hiệu trên màn hình theo dõi, phân tích và xu hướng. |
+| `sys_reference_event` | Событие мониторинга. Число после буквы — порядковый номер маркера в исследовании. | Monitoring event. The following number is the marker sequence within the study. | 监测事件。字母后的数字表示该检查中的标记顺序。 | Sự kiện theo dõi. Số sau chữ cái là thứ tự dấu mốc trong nghiên cứu. |
+| `sys_reference_delta_z` | Изменение электрического импеданса относительно опорного состояния. | Electrical impedance change relative to the reference state. | 相对于参考状态的电阻抗变化。 | Thay đổi trở kháng điện so với trạng thái tham chiếu. |
+| `sys_reference_conductivity` | Реконструированная относительная электрическая проводимость сечения. | Reconstructed relative electrical conductivity of the cross-section. | 截面的重建相对电导率。 | Độ dẫn điện tương đối được tái tạo của mặt cắt. |
+| `sys_reference_eeli` | Конечно-экспираторный индекс импеданса лёгких — уровень в конце выдоха. | End-expiratory lung impedance index — the level at the end of expiration. | 呼气末肺阻抗指数，即呼气结束时的水平。 | Chỉ số trở kháng phổi cuối thì thở ra — mức tại cuối thì thở ra. |
+| `sys_reference_eili` | Конечно-инспираторный индекс импеданса лёгких — уровень в конце вдоха. | End-inspiratory lung impedance index — the level at the end of inspiration. | 吸气末肺阻抗指数，即吸气结束时的水平。 | Chỉ số trở kháng phổi cuối thì hít vào — mức tại cuối thì hít vào. |
+| `sys_reference_tvi` | Импедансная дыхательная вариация: разность EILI и EELI за дыхательный цикл, в условных единицах. | Impedance tidal variation: EILI minus EELI over one breath, in arbitrary units. | 阻抗潮气变化：一个呼吸周期内 EILI 与 EELI 之差，单位为任意单位。 | Biến thiên khí lưu thông theo trở kháng: EILI trừ EELI trong một nhịp thở, theo đơn vị quy ước. |
+| `sys_reference_mvi` | Импедансная минутная вентиляция: TVi × RRi, в условных единицах в минуту; не литры в минуту. | Impedance minute ventilation: TVi × RRi in arbitrary units per minute; not litres per minute. | 阻抗分钟通气量：TVi × RRi，单位为任意单位/分钟，并非升/分钟。 | Thông khí phút theo trở kháng: TVi × RRi, đơn vị quy ước/phút; không phải lít/phút. |
+| `sys_reference_rr` | Частота дыхания — количество дыхательных циклов в минуту. | Respiratory rate — the number of breathing cycles per minute. | 呼吸频率，即每分钟的呼吸周期数。 | Tần số thở — số chu kỳ hô hấp trong một phút. |
+| `sys_reference_rl` | Отношение вентиляции правого лёгкого к вентиляции левого лёгкого. | Right-lung ventilation divided by left-lung ventilation. | 右肺通气量与左肺通气量之比。 | Tỷ số thông khí phổi phải trên thông khí phổi trái. |
+| `sys_reference_vd` | Отношение вентиляции вентральной области к вентиляции дорсальной области. | Ventral-region ventilation divided by dorsal-region ventilation. | 腹侧区域通气量与背侧区域通气量之比。 | Tỷ số thông khí vùng bụng trên thông khí vùng lưng. |
+| `sys_reference_roi` | Область интереса — выделенная часть реконструированного сечения для регионарного анализа. | Region of interest — a selected part of the reconstructed cross-section for regional analysis. | 感兴趣区域，即用于区域分析的重建截面选定部分。 | Vùng quan tâm — phần được chọn của mặt cắt tái tạo để phân tích khu vực. |
+| `sys_reference_n_percent` | Доля вентиляции выбранной области в общей вентиляции, в процентах. | The selected region's share of total ventilation, in percent. | 所选区域占总通气量的百分比。 | Tỷ lệ thông khí của vùng được chọn trong tổng thông khí, tính bằng phần trăm. |
+| `sys_reference_peep` | Положительное давление в конце выдоха. | Positive end-expiratory pressure. | 呼气末正压。 | Áp lực dương cuối thì thở ra. |
+| `sys_reference_rts` | Регионарный дыхательный сигнал, используемый при расчёте карты тихих пространств. | Regional tidal signal used to calculate the Silent Spaces map. | 用于计算静默空间图的区域潮气信号。 | Tín hiệu khí lưu thông khu vực dùng để tính bản đồ vùng im lặng. |
+| `sys_reference_cov` | Центр вентиляции — координата распределения вентиляции по выбранной оси. | Centre of ventilation — the ventilation-distribution coordinate along the selected axis. | 通气中心，即沿所选轴的通气分布坐标。 | Tâm thông khí — tọa độ phân bố thông khí theo trục đã chọn. |
+| `sys_reference_silent_spaces` | Зависимые и независимые тихие пространства — области с низким регионарным дыхательным сигналом. | Dependent and non-dependent Silent Spaces — regions with low regional tidal signal. | 依赖区和非依赖区静默空间，即区域潮气信号较低的区域。 | Vùng im lặng phụ thuộc và không phụ thuộc — các vùng có tín hiệu khí lưu thông khu vực thấp. |
+| `sys_reference_fls` | Функциональный размер лёгких — доля пикселей с зарегистрированной вентиляцией. | Functional lung size — the proportion of pixels with detected ventilation. | 功能肺大小，即检测到通气的像素比例。 | Kích thước phổi chức năng — tỷ lệ pixel phát hiện có thông khí. |
+| `sys_reference_trend_points` | BB — точки по завершённым дыхательным циклам; TB — точки по временным интервалам. | BB — completed-breath points; TB — time-interval points. | BB 表示完整呼吸周期点；TB 表示时间间隔点。 | BB — điểm theo chu kỳ thở hoàn chỉnh; TB — điểm theo khoảng thời gian. |
+| `sys_reference_au` | Условные единицы: относительная величина без объёмной калибровки. | Arbitrary units: a relative value without volumetric calibration. | 任意单位：未经体积校准的相对值。 | Đơn vị quy ước: giá trị tương đối chưa hiệu chuẩn thể tích. |
+| `sys_engineering_background_color` | Цвет заднего фона: | Background colour: | 背景颜色： | Màu nền: |
+| `sys_engineering_background_picker_title` | Выбор цвета заднего фона | Select background colour | 选择背景颜色 | Chọn màu nền |
+| `sys_engineering_background_reset` | По умолчанию | Reset to default | 恢复默认 | Đặt lại mặc định |
+| `sys_engineering_waveform_fill` | Показывать заливку под графиками | Show fill below charts | 显示图表下方填充 | Hiển thị phần tô bên dưới biểu đồ |
+| `sys_engineering_peep_tab_visibility` | Показывать PEEP в правом меню | Show PEEP in the right menu | 在右侧菜单中显示 PEEP | Hiển thị PEEP trong menu bên phải |
+| `sys_element_peep_map` | Карта тихих пространств | Silent Spaces map | 静默空间图 | Bản đồ vùng im lặng |
+| `sys_element_peep_metrics` | Показатели PEEP | PEEP metrics | PEEP 指标 | Các chỉ số PEEP |
+| `sys_element_peep_controls` | Кнопки и счётчики PEEP | PEEP controls and counters | PEEP 控件和计时器 | Điều khiển và bộ đếm PEEP |
 | `sys_engineering_tab_trends` | Тренды | Trends | 趋势 | Xu hướng |
 | `sys_engineering_trend_chart_mode` | Представление трендов: | Trend presentation: | 趋势显示： | Hiển thị xu hướng: |
+| `sys_engineering_trend_rounding` | Знаков после запятой в трендах: | Decimal places in trends: | 趋势小数位数： | Số chữ số thập phân trong xu hướng: |
+| `sys_engineering_trend_visibility` | Рассчитываемые параметры трендов | Calculated trend parameters | 计算的趋势参数 | Thông số xu hướng được tính toán |
+| `sys_engineering_trend_visibility_hint` | Снимите отметку, чтобы не рассчитывать и не отображать параметр в новых трендах. На остальных экранах параметр останется видимым. | Clear a parameter to stop calculating and displaying it in new trends. It remains visible on other screens. | 取消勾选后，新的趋势中将不再计算或显示该参数。该参数在其他屏幕上仍然可见。 | Bỏ chọn để ngừng tính toán và hiển thị thông số trong các xu hướng mới. Thông số vẫn hiển thị trên các màn hình khác. |
+| `sys_engineering_aeration_visibility` | Глобальное отображение расчётных параметров аэрации | Global display of calculated aeration parameters | 全局显示计算的通气参数 | Hiển thị toàn cục các thông số thông khí tính toán |
+| `sys_engineering_aeration_visibility_hint` | Снимите отметку, чтобы скрыть параметр во всём интерфейсе. Эта настройка не отключает его отдельный расчёт тренда. | Clear a parameter to hide it throughout the interface. This does not disable its separate trend calculation. | 取消勾选可在整个界面中隐藏该参数。此设置不会禁用其独立的趋势计算。 | Bỏ chọn để ẩn thông số trên toàn bộ giao diện. Cài đặt này không tắt phép tính xu hướng riêng của thông số. |
+| `trends_no_visible_metrics` | Все параметры этой вкладки скрыты в инженерном меню. | All parameters on this tab are hidden in Engineering mode. | 此选项卡的所有参数均已在工程模式中隐藏。 | Tất cả thông số trên thẻ này đã bị ẩn trong chế độ kỹ thuật. |
+| `trends_previous_columns` | Предыдущие столбцы | Previous columns | 上一组列 | Các cột trước |
+| `trends_next_columns` | Следующие столбцы | Next columns | 下一组列 | Các cột tiếp theo |
+| `trends_following_latest` | Последние данные | Latest data | 最新数据 | Dữ liệu mới nhất |
+| `trends_history_view` | Просмотр истории | History view | 历史视图 | Xem lịch sử |
 | `sys_trend_chart_bars` | Столбцовые диаграммы | Bar charts | 柱状图 | Biểu đồ cột |
 | `sys_trend_chart_lines` | Графики | Line charts | 折线图 | Biểu đồ đường |
 | `sys_engineering_trend_point_mode` | Источник точек тренда: | Trend point source: | 趋势点来源： | Nguồn điểm xu hướng: |
@@ -472,5 +521,7 @@
 | Обновление приостановлено | Данные: обновление приостановлено | Data: updates paused | 数据：更新已暂停 | Dữ liệu: cập nhật đã tạm dừng | `monitor_quality_stale` |
 | Данные недоступны | Данные недоступны | Data unavailable | 数据不可用 | Dữ liệu không khả dụng | `monitor_quality_unavailable` |
 | Маркер события | Маркер события | Event marker | 事件标记 | Đánh dấu sự kiện | `marker_dialog_title` |
+| Иное | Иное | Other | 其他 | Khác | `marker_type_other` |
+| Обозначение события на графике | С | E | 事 | S | `marker_chart_prefix` |
 | Позиция исследования | Позиция исследования | Study position | 检查位置 | Vị trí nghiên cứu | `marker_position` |
 | Корректирующая запись | Корректирующая запись | Correction entry | 更正记录 | Bản ghi hiệu chỉnh | `marker_correction_title` |
