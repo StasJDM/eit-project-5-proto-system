@@ -11,7 +11,7 @@ import math
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from ..i18n import i18n, t
@@ -45,6 +45,12 @@ class LungVizWidget(QWidget):
         self._color_map_id = DEFAULT_COLOR_MAP_ID
         self._custom_color_low = "#29b6d1"
         self._custom_color_high = "#ffc857"
+        self._palette = tuple(QColor(color) for color in resolve_color_map(
+            self._color_map_id, self._custom_color_low, self._custom_color_high))
+        self._neutral_color = QColor("#17232d")
+        self._geometry_key = None
+        self._image_key = None
+        self._image = QImage()
         self._rendered_element_count = 0
         self._section_profile = geometry_profile("adult_ellipse")
         self._fullscreen_activation_enabled = False
@@ -88,6 +94,7 @@ class LungVizWidget(QWidget):
         )
 
     def _on_language_changed(self, _language: str) -> None:
+        self._image_key = None
         self._update_tooltip()
         self.update()
 
@@ -125,6 +132,9 @@ class LungVizWidget(QWidget):
         self._color_map_id = color_map_id
         self._custom_color_low = custom_low
         self._custom_color_high = custom_high
+        self._palette = tuple(QColor(color) for color in resolve_color_map(
+            color_map_id, custom_low, custom_high))
+        self._image_key = None
         self.update()
 
     def set_section_profile(self, profile: GeometryProfile) -> None:
@@ -132,9 +142,10 @@ class LungVizWidget(QWidget):
 
         if not isinstance(profile, GeometryProfile):
             raise TypeError("profile must be a GeometryProfile")
-        if profile.cache_key() == self._section_profile.cache_key():
+        if profile is self._section_profile or profile.cache_key() == self._section_profile.cache_key():
             return
         self._section_profile = profile
+        self._geometry_key = self._image_key = None
         self.update()
 
     def _profile_extent(self) -> float:
@@ -174,17 +185,23 @@ class LungVizWidget(QWidget):
         self._roi_vals = tuple(
             float(value) if value is not None else 0.0 for value in roi_vals
         )
-        self._delta_reconstruction = self._validated_map(reconstruction_map)
-        self._absolute_conductivity = self._validated_map(absolute_conductivity_map)
-        if self._delta_reconstruction is None and self._absolute_conductivity is None:
-            self._color_limit = None
-        if self._delta_reconstruction is not None:
-            frame_limit = max(
-                abs(value) for row in self._delta_reconstruction for value in row
-            )
-            if self._color_limit is None and frame_limit > 1e-9:
-                self._color_limit = frame_limit
+        if reconstruction_map is not self._delta_reconstruction:
+            self._delta_reconstruction = self._validated_map(reconstruction_map)
+        if absolute_conductivity_map is not self._absolute_conductivity:
+            self._absolute_conductivity = self._validated_map(absolute_conductivity_map)
+        self.observe_delta_scale(self._delta_reconstruction, self._absolute_conductivity is not None)
         self.update()
+
+    def observe_delta_scale(self, delta_map, has_absolute=False) -> None:
+        """Latch the first nonzero delta range even while this view is hidden."""
+        if delta_map is None and not has_absolute:
+            self._color_limit = None
+        if delta_map is not None and self._color_limit is None:
+            frame_limit = max(
+                abs(value) for row in delta_map for value in row
+            )
+            if frame_limit > 1e-9:
+                self._color_limit = frame_limit
 
     def _effective_display_mode(self) -> str:
         if self._display_mode == "absolute" and self._absolute_conductivity is not None:
@@ -216,6 +233,11 @@ class LungVizWidget(QWidget):
     ) -> tuple[tuple[float, ...], ...] | None:
         if values is None:
             return None
+        if (type(values) is tuple and values and type(values[0]) is tuple and values[0]
+                and all(type(row) is tuple and len(row) == len(values[0]) for row in values)
+                and all(type(value) is float and math.isfinite(value)
+                        for row in values for value in row)):
+            return values
         try:
             result = tuple(tuple(float(value) for value in row) for row in values)
         except (TypeError, ValueError):
@@ -231,6 +253,33 @@ class LungVizWidget(QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
+        transform = painter.deviceTransform()
+        scale = transform.m11()
+        if (scale <= 0 or not scale.is_integer() or transform.m22() != scale or transform.m12() or transform.m21()
+                or not transform.dx().is_integer() or not transform.dy().is_integer()):
+            self._paint_contents(painter)
+            return
+        device = painter.device()
+        key = (self.width(), self.height(), scale, device.logicalDpiX(), device.logicalDpiY(),
+               self.display_mode, len(self._roi_vals), self._color_limit)
+        reconstruction = self._displayed_map()
+        if self._image_key != key or self._image_map is not reconstruction:
+            self._image = QImage(math.ceil(self.width() * scale), math.ceil(self.height() * scale),
+                                 QImage.Format_ARGB32_Premultiplied)
+            self._image.setDevicePixelRatio(scale)
+            self._image.setDotsPerMeterX(round(device.logicalDpiX() / 0.0254))
+            self._image.setDotsPerMeterY(round(device.logicalDpiY() / 0.0254))
+            self._image.fill(QColor(C["bg_panel"]))
+            layer = QPainter(self._image)
+            try:
+                self._paint_contents(layer)
+            finally:
+                layer.end()
+            self._image_key = key
+            self._image_map = reconstruction
+        painter.drawImage(0, 0, self._image)
+
+    def _paint_contents(self, painter: QPainter) -> None:
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(C["bg_panel"]))
 
@@ -298,18 +347,51 @@ class LungVizWidget(QWidget):
 
         rows = len(reconstruction)
         columns = len(reconstruction[0])
+        key = (rect.getRect(), rows, columns)
+        if key != self._geometry_key:
+            self._cells, self._lungs, self._thorax, self._electrodes = self._map_geometry(
+                rect, rows, columns)
+            self._geometry_key = key
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setPen(QPen(QColor(255, 255, 255, 18), 0.45))
+        for row, column, cell in self._cells:
+            painter.setBrush(self._element_color(reconstruction[row][column]))
+            painter.drawRect(cell)
+        self._rendered_element_count = len(self._cells)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(QColor(190, 177, 151, 24))
+        painter.setPen(QPen(QColor(225, 214, 191, 185), 1.6))
+        for lung in self._lungs:
+            painter.drawPath(lung)
+        painter.setBrush(Qt.NoBrush)
+        thorax_pen = QPen(
+            QColor(185, 211, 225, 205),
+            self._thorax_contour_width(rect.width()),
+        )
+        thorax_pen.setCapStyle(Qt.RoundCap)
+        thorax_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(thorax_pen)
+        painter.drawPath(self._thorax)
+        painter.setPen(QPen(QColor(185, 211, 225, 85), 0.8, Qt.DashLine))
+        painter.drawLine(
+            rect.center().x(), rect.top() + rect.height() * 0.13,
+            rect.center().x(), rect.bottom() - rect.height() * 0.13,
+        )
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#40c4ff"))
+        for electrode in self._electrodes:
+            painter.drawEllipse(electrode)
+
+    def _map_geometry(self, rect, rows, columns):
+        extent = self._profile_extent()
         cell_w = rect.width() / columns
         cell_h = rect.height() / rows
-        grid_pen = QPen(QColor(255, 255, 255, 18), 0.45)
-        extent = self._profile_extent()
-
-        # Pixel cells stay crisp; antialiasing is restored for contours.
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setPen(grid_pen)
-        for row_index, row in enumerate(reconstruction):
+        cells = []
+        for row_index in range(rows):
             y0 = rect.top() + row_index * cell_h
             y1 = rect.top() + (row_index + 1) * cell_h
-            for column_index, value in enumerate(row):
+            for column_index in range(columns):
                 physical_x = -extent + (column_index + 0.5) * (2.0 * extent / columns)
                 physical_y = extent - (row_index + 0.5) * (2.0 * extent / rows)
                 if not self._inside_profile(physical_x, physical_y):
@@ -320,15 +402,9 @@ class LungVizWidget(QWidget):
                 display_column = columns - 1 - column_index
                 x0 = rect.left() + display_column * cell_w
                 x1 = rect.left() + (display_column + 1) * cell_w
-                painter.setBrush(self._element_color(value))
-                painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
-                self._rendered_element_count += 1
-        painter.setRenderHint(QPainter.Antialiasing, True)
-
-        # Landmarks are overlays; they never replace or aggregate map cells.
+                cells.append((row_index, column_index, QRectF(x0, y0, x1 - x0, y1 - y0)))
+        lungs = []
         if self._section_profile.lungs_enabled:
-            painter.setBrush(QColor(190, 177, 151, 24))
-            painter.setPen(QPen(QColor(225, 214, 191, 185), 1.6))
             for side in ("left", "right"):
                 lung = QPainterPath()
                 lung_points = []
@@ -343,7 +419,7 @@ class LungVizWidget(QWidget):
                 for point in lung_points[1:]:
                     lung.lineTo(*point)
                 lung.closeSubpath()
-                painter.drawPath(lung)
+                lungs.append(lung)
 
         thorax = QPainterPath()
         contour_points: list[tuple[float, float]] = []
@@ -359,30 +435,15 @@ class LungVizWidget(QWidget):
             for point in contour_points[1:]:
                 thorax.lineTo(*point)
             thorax.closeSubpath()
-        painter.setBrush(Qt.NoBrush)
-        thorax_pen = QPen(
-            QColor(185, 211, 225, 205),
-            self._thorax_contour_width(rect.width()),
-        )
-        thorax_pen.setCapStyle(Qt.RoundCap)
-        thorax_pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(thorax_pen)
-        painter.drawPath(thorax)
-        painter.setPen(QPen(QColor(185, 211, 225, 85), 0.8, Qt.DashLine))
-        painter.drawLine(
-            rect.center().x(), rect.top() + rect.height() * 0.13,
-            rect.center().x(), rect.bottom() - rect.height() * 0.13,
-        )
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#40c4ff"))
+        electrodes = []
         dot = max(1.4, rect.width() * 0.012)
         for index in range(16):
             angle = 2 * math.pi * index / 16 - math.pi / 2
             radius = self._section_profile.radius_at(angle)
             x = rect.center().x() - radius * math.cos(angle) / (2 * extent) * rect.width()
             y = rect.center().y() - radius * math.sin(angle) / (2 * extent) * rect.height()
-            painter.drawEllipse(QRectF(x - dot, y - dot, dot * 2, dot * 2))
+            electrodes.append(QRectF(x - dot, y - dot, dot * 2, dot * 2))
+        return cells, lungs, thorax, electrodes
 
     def _draw_roi_grid(
         self,
@@ -448,14 +509,8 @@ class LungVizWidget(QWidget):
         painter.restore()
 
     def _element_color(self, value: float) -> QColor:
-        low_hex, high_hex = resolve_color_map(
-            self._color_map_id,
-            self._custom_color_low,
-            self._custom_color_high,
-        )
-        low_color = QColor(low_hex)
-        high_color = QColor(high_hex)
-        neutral = QColor("#17232d")
+        low_color, high_color = self._palette
+        neutral = self._neutral_color
         if self._effective_display_mode() == "absolute":
             if value <= 0.0:
                 return QColor("#101820")

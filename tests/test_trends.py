@@ -10,6 +10,7 @@ import numpy as np
 
 import app.application  # Load application package before storage (shared type graph).
 from app.application import EventBus, MonitoringSnapshot, TrendService
+from app.application.trend_buffer import TrendWindow
 from app.application.monitoring import TrendSample
 from app.application.monitoring import _trend
 from app.screens.trends_screen import (
@@ -25,6 +26,23 @@ from app.storage import Database, RepositoryBundle
 
 
 class TrendStorageTest(unittest.TestCase):
+    def test_long_cycle_preserves_exact_medians_after_spill_and_reset(self):
+        window = TrendWindow()
+        window.memory_limit = 2
+        now = datetime.now(timezone.utc)
+        try:
+            for i, row in enumerate(((1., 2.), (None, 5.), (2., 4., 8., 10.), (0., 2.))):
+                window.append(TrendSample(i, now, float(i), row, DataQuality.VALID,
+                                          metric_values=(("rr_bpm", 10. + i),)))
+            self.assertEqual(window.side_medians(), (3., 0.))
+            self.assertEqual(window.median("metric:rr_bpm"), 11.5)
+            self.assertEqual(window.mean_global(), 1.5)
+            self.assertEqual(window.quality(), (DataQuality.VALID, None))
+        finally:
+            window.clear()
+        self.assertEqual(len(window), 0)
+        self.assertIsNone(window.mean_global())
+
     def test_positive_and_negative_columns_both_grow_upward(self):
         positive = _upward_bar_geometry(5.0, 10.0, 100.0, 80.0)
         negative = _upward_bar_geometry(-5.0, 10.0, 100.0, 80.0)

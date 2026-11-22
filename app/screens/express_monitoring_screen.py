@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from .base_screen import LiveScreen
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -87,7 +88,7 @@ class _MetricCard(QFrame):
         self.value.setText(text)
 
 
-class ExpressMonitoringScreen(QWidget):
+class ExpressMonitoringScreen(LiveScreen):
     """Synchronised lung map, global plethysmogram and core respiratory metrics."""
 
     def __init__(
@@ -184,9 +185,7 @@ class ExpressMonitoringScreen(QWidget):
             self._unsubscribe_eit = eit_settings.subscribe(self._apply_eit_settings)
             self._apply_eit_settings(eit_settings.current)
 
-        self._paint_timer = QTimer(self)
-        self._paint_timer.timeout.connect(self._on_paint)
-        self._paint_timer.start(100)
+        self.start_refresh(100)
         i18n.language_changed.connect(self.retranslate)
         self._on_paint()
 
@@ -234,6 +233,9 @@ class ExpressMonitoringScreen(QWidget):
             custom_low=settings.custom_color_low,
             custom_high=settings.custom_color_high,
         )
+
+    def _scale_widget(self):
+        return self.lung_viz
 
     def _on_paint(self, *_args) -> None:
         active_profile = getattr(self._monitoring, "section_profile", None)

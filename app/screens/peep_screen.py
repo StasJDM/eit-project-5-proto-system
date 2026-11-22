@@ -1,6 +1,6 @@
 """Standalone PEEP screen shown as a top-level navigation item."""
 
-from PySide6.QtCore import QTimer
+from .base_screen import LiveScreen
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from ..application import EngineeringSettings, EngineeringSettingsService
@@ -9,7 +9,7 @@ from ..session_timers import SessionTimers
 from .analysis_screen import PAINT_MS, PeepTab
 
 
-class PeepScreen(QWidget):
+class PeepScreen(LiveScreen):
     """Live Silent Spaces map and PEEP-oriented distribution metrics."""
 
     def __init__(
@@ -39,9 +39,7 @@ class PeepScreen(QWidget):
             )
             self._apply_engineering_settings(engineering_settings.current)
 
-        self._paint_timer = QTimer(self)
-        self._paint_timer.timeout.connect(self._on_paint)
-        self._paint_timer.start(PAINT_MS)
+        self.start_refresh(PAINT_MS)
 
         timers = SessionTimers.instance(self)
         timers.updated.connect(self._tab.set_counters)

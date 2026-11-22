@@ -13,7 +13,7 @@ from app.application.exporting import (
 from app.config import DataMode
 from app.domain import (
     AcquisitionSettings, DataQuality, Event, EventCategory, MonitoringSession,
-    Patient, Study, TrendAggregate,
+    Patient, Study, TrendAggregate, EITFrame, serialize_model,
 )
 from app.storage import AcquisitionRecordingStore, Database, RepositoryBundle
 
@@ -95,6 +95,40 @@ class ExportingTest(unittest.TestCase):
             workbook = book.read("xl/workbook.xml").decode("utf-8")
         for title in ("metadata", "metrics", "events", "trends"):
             self.assertIn(f'name="{title}"', workbook)
+
+    def test_raw_export_streams_all_chunks_in_recorded_order(self):
+        import zipfile
+        from xml.etree import ElementTree
+
+        self.store.chunk_size = 2
+        session = self.repositories.sessions.get_for_study(self.study1.id)
+        writer = self.store.open_writer(self.study1.id, session.id, frame_rate_hz=25)
+        frames = [
+            EITFrame(sequence_number=i, timestamp_utc=NOW + timedelta(seconds=i),
+                     belt_index=0, global_impedance=float(i), roi_impedance=(1.,) * 8,
+                     reconstructed_delta_z=((1., 2.),), quality=DataQuality.VALID, simulated=True)
+            for i in range(5)
+        ]
+        for frame in frames:
+            writer.append(frame)
+        writer.close()
+        for fmt in ("json", "csv", "xlsx"):
+            result = self.service.export(Path(self.temp.name) / fmt, fmt, [self.study1.id],
+                                         ["raw_data"], now_utc=NOW)
+            path = result.files[0]
+            if fmt == "json":
+                rows = json.loads(path.read_bytes())["studies"][0]["raw_data"]
+                self.assertEqual(rows, [serialize_model(frame) for frame in frames])
+            elif fmt == "csv":
+                with path.open(encoding=CSV_ENCODING, newline="") as source:
+                    rows = list(csv.DictReader(source, delimiter=";"))
+                self.assertEqual([int(row["sequence_number"]) for row in rows], list(range(5)))
+            else:
+                with zipfile.ZipFile(path) as book:
+                    sheet = ElementTree.fromstring(book.read("xl/worksheets/sheet1.xml"))
+                rows = sheet.findall(".//{*}row")
+                column = [cell.findtext(".//{*}t") for cell in rows[0]].index("sequence_number")
+                self.assertEqual([int(row[column].findtext("{*}v")) for row in rows[1:]], list(range(5)))
 
     def test_estimate_marks_metadata_as_personal_data(self):
         estimate = self.service.estimate([self.study1.id, self.study2.id], ["metadata"])

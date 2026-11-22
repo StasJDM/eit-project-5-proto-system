@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -44,6 +45,18 @@ class InsufficientDiskSpaceError(RecordingError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class RecordingChunk:
+    path: Path
+    checksum: str
+    kind: str
+
+    def read(self) -> list[SourceFrame]:
+        if _sha256(self.path) != self.checksum:
+            raise RecordingError(f"checksum mismatch: {self.path.name}")
+        return _load_chunk(self.path, self.kind)
+
+
 class AcquisitionRecordingStore:
     def __init__(
         self,
@@ -75,20 +88,27 @@ class AcquisitionRecordingStore:
         )
 
     def load(self, study_id: UUID, session_id: UUID) -> tuple[SourceFrame, ...]:
+        return tuple(frame for _, frames in self.iter_chunks(study_id, session_id)
+                     for frame in frames)
+
+    def iter_chunks(
+        self, study_id: UUID, session_id: UUID
+    ) -> Iterator[tuple[RecordingChunk, list[SourceFrame]]]:
         directory = self.root / str(study_id) / str(session_id)
         manifest = _read_manifest(directory / "manifest.json")
-        frames: list[SourceFrame] = []
-        for chunk in manifest.get("chunks", []):
-            path = directory / chunk["file"]
-            if _sha256(path) != chunk["sha256"]:
-                raise RecordingError(f"checksum mismatch: {path.name}")
-            frames.extend(_load_chunk(path, manifest["frame_kind"]))
-        sequences = [item.sequence_number for item in frames]
-        if sequences != sorted(sequences) or len(sequences) != len(set(sequences)):
-            raise RecordingError("recording contains duplicate or reversed sequences")
-        if len(frames) != manifest.get("frame_count"):
+        previous = None
+        count = 0
+        for entry in manifest.get("chunks", []):
+            chunk = RecordingChunk(directory / entry["file"], entry["sha256"], manifest["frame_kind"])
+            frames = chunk.read()
+            for frame in frames:
+                if previous is not None and frame.sequence_number <= previous:
+                    raise RecordingError("recording contains duplicate or reversed sequences")
+                previous = frame.sequence_number
+            count += len(frames)
+            yield chunk, frames
+        if count != manifest.get("frame_count"):
             raise RecordingError("recording frame count does not match manifest")
-        return tuple(frames)
 
     def metadata(self, study_id: UUID, session_id: UUID) -> RecordingMetadata:
         """Return validated, immutable playback metadata without exposing the manifest."""
@@ -320,43 +340,53 @@ def _write_chunk(output, frames: tuple[SourceFrame, ...]) -> None:
 def _load_chunk(path: Path, kind: str) -> list[SourceFrame]:
     result: list[SourceFrame] = []
     with np.load(path, allow_pickle=False) as chunk:
-        for index in range(len(chunk["sequence_number"])):
-            common = {
-                "sequence_number": int(chunk["sequence_number"][index]),
-                "timestamp_utc": datetime.fromisoformat(str(chunk["timestamp_utc"][index])),
-                "belt_index": int(chunk["belt_index"][index]),
-                "quality": DataQuality(str(chunk["quality"][index])),
-                "simulated": bool(chunk["simulated"][index]),
-            }
-            if kind == "raw_measurement":
-                result.append(RawMeasurementFrame(
-                    **common,
-                    channel_values=tuple(float(value) for value in chunk["channel_values"][index]),
-                    protocol_id=str(chunk["protocol_id"][index]),
-                    timestamp_source=TimestampSource(str(chunk["timestamp_source"][index])),
-                ))
-            elif kind == "eit_frame":
-                result.append(EITFrame(
-                    **common,
-                    global_impedance=float(chunk["global_impedance"][index]),
-                    roi_impedance=tuple(float(value) for value in chunk["roi_impedance"][index]),
-                    reconstructed_delta_z=tuple(
+        names = ["sequence_number", "timestamp_utc", "belt_index", "quality", "simulated"]
+        if kind == "raw_measurement":
+            names += ["channel_values", "protocol_id", "timestamp_source"]
+        elif kind == "eit_frame":
+            names += ["global_impedance", "roi_impedance", "reconstructed_delta_z", "format_version"]
+        else:
+            raise RecordingError(f"unknown frame kind: {kind!r}")
+        fields = {name: chunk[name] for name in names}
+        if kind == "eit_frame" and "absolute_conductivity" in chunk.files:
+            flags = fields["has_absolute_conductivity"] = chunk["has_absolute_conductivity"]
+            if flags.any():
+                fields["absolute_conductivity"] = chunk["absolute_conductivity"]
+    for index in range(len(fields["sequence_number"])):
+        common = {
+            "sequence_number": int(fields["sequence_number"][index]),
+            "timestamp_utc": datetime.fromisoformat(str(fields["timestamp_utc"][index])),
+            "belt_index": int(fields["belt_index"][index]),
+            "quality": DataQuality(str(fields["quality"][index])),
+            "simulated": bool(fields["simulated"][index]),
+        }
+        if kind == "raw_measurement":
+            result.append(RawMeasurementFrame(
+                **common,
+                channel_values=tuple(float(value) for value in fields["channel_values"][index]),
+                protocol_id=str(fields["protocol_id"][index]),
+                timestamp_source=TimestampSource(str(fields["timestamp_source"][index])),
+            ))
+        else:
+            result.append(EITFrame(
+                **common,
+                global_impedance=float(fields["global_impedance"][index]),
+                roi_impedance=tuple(float(value) for value in fields["roi_impedance"][index]),
+                reconstructed_delta_z=tuple(
+                    tuple(float(value) for value in row)
+                    for row in fields["reconstructed_delta_z"][index]
+                ),
+                absolute_conductivity=(
+                    tuple(
                         tuple(float(value) for value in row)
-                        for row in chunk["reconstructed_delta_z"][index]
-                    ),
-                    absolute_conductivity=(
-                        tuple(
-                            tuple(float(value) for value in row)
-                            for row in chunk["absolute_conductivity"][index]
-                        )
-                        if "absolute_conductivity" in chunk.files
-                        and bool(chunk["has_absolute_conductivity"][index])
-                        else None
-                    ),
-                    format_version=int(chunk["format_version"][index]),
-                ))
-            else:
-                raise RecordingError(f"unknown frame kind: {kind!r}")
+                        for row in fields["absolute_conductivity"][index]
+                    )
+                    if "absolute_conductivity" in fields
+                    and bool(fields["has_absolute_conductivity"][index])
+                    else None
+                ),
+                format_version=int(fields["format_version"][index]),
+            ))
     return result
 
 

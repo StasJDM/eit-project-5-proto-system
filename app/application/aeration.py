@@ -162,6 +162,7 @@ class AerationProcessor:
         self.reset()
 
     def reset(self) -> None:
+        self._rolling_result: AerationResult | None = None
         width = self.parameters.smoothing_samples
         self._filter: tuple[deque[float], ...] = tuple(
             deque(maxlen=width) for _ in range(self.parameters.roi_count + 1)
@@ -186,6 +187,7 @@ class AerationProcessor:
         return self._quality_reason
 
     def process(self, frame: EITFrame) -> ProcessedAerationSample | None:
+        self._rolling_result = None
         global_value, roi_values = _derive_aeration_channels(
             frame, self.parameters.roi_count
         )
@@ -214,16 +216,17 @@ class AerationProcessor:
 
     def waveforms(self, window_seconds: float) -> dict[str, object]:
         count = max(1, int(window_seconds * self.parameters.sample_rate_hz))
-        global_values = np.asarray(tuple(self._global), dtype=float)
-        velocity = calculate_breathing_velocity(global_values, self.parameters)
+        # Differentiate the full history before slicing to preserve window edges.
+        history = np.asarray(self._global, dtype=float)
+        waves = self._window_channels(count)
+        waves["global"] = history[-count:]
+        waves["velocity"] = calculate_breathing_velocity(history, self.parameters)[-count:]
+        return waves
+
+    def _window_channels(self, count: int) -> dict[str, object]:
         return {
             "time": np.asarray(tuple(self._times)[-count:], dtype=float),
-            "global": global_values[-count:],
-            "velocity": velocity[-count:],
-            "rois": [
-                np.asarray(tuple(values)[-count:], dtype=float)
-                for values in self._rois
-            ],
+            "rois": [np.asarray(tuple(values)[-count:], dtype=float) for values in self._rois],
         }
 
     def configure_analysis(
@@ -234,6 +237,7 @@ class AerationProcessor:
             raise ValueError("window_seconds must be positive and finite")
         if cycle_count is not None and cycle_count < 1:
             raise ValueError("cycle_count must be positive")
+        self._rolling_result = None
         self._analysis_window_seconds = float(window_seconds)
         self._analysis_cycle_count = cycle_count
 
@@ -253,13 +257,25 @@ class AerationProcessor:
         With no explicit bounds, the configured rolling interval is used.  Explicit
         bounds make the same stored frame range independently re-analyzable.
         """
+        if start_time_seconds is None and end_time_seconds is None and cycle_count is None:
+            if self._rolling_result is None:
+                self._rolling_result = self._calculate_result(None, None, None)
+            return self._rolling_result
+        return self._calculate_result(start_time_seconds, end_time_seconds, cycle_count)
+
+    def _calculate_result(
+        self,
+        start_time_seconds: float | None,
+        end_time_seconds: float | None,
+        cycle_count: int | None,
+    ) -> AerationResult:
         explicit_interval = start_time_seconds is not None or end_time_seconds is not None
-        waves = self.waveforms(
-            self._capacity / self.parameters.sample_rate_hz
-            if explicit_interval else self._analysis_window_seconds
-        )
+        window = (self._capacity / self.parameters.sample_rate_hz
+                  if explicit_interval else self._analysis_window_seconds)
+        count = max(1, int(window * self.parameters.sample_rate_hz))
+        waves = self._window_channels(count)
         times = waves["time"]
-        global_values = waves["global"]
+        global_values = np.asarray(tuple(self._global)[-count:], dtype=float)
         roi_values = waves["rois"]
         selected_cycles = self._analysis_cycle_count if cycle_count is None else cycle_count
         if explicit_interval:
@@ -609,10 +625,7 @@ def calculate_breathing_velocity(
     detection_values = _breathing_detection_signal(
         np.asarray(values, dtype=float), parameters
     )
-    slopes, _maximum_regions, _minimum_regions = _derivative_transition_regions(
-        detection_values, parameters
-    )
-    return slopes
+    return _regression_slopes(detection_values, parameters)
 
 
 def _breath_turning_points(
@@ -690,12 +703,9 @@ def _mad_mean_turning_points(
     )
 
 
-def _derivative_transition_regions(
-    values: np.ndarray, parameters: AerationAlgorithmParameters
-) -> tuple[np.ndarray, tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
-    """Return MAD-delimited positive/negative derivative transition zones."""
+def _regression_slopes(values: np.ndarray, parameters: AerationAlgorithmParameters) -> np.ndarray:
     if values.size < 3:
-        return np.asarray([], dtype=float), (), ()
+        return np.asarray([], dtype=float)
     width = max(3, round(
         parameters.derivative_window_seconds * parameters.sample_rate_hz
     ))
@@ -703,13 +713,21 @@ def _derivative_transition_regions(
         width += 1
     width = min(width, values.size if values.size % 2 else values.size - 1)
     if width < 3:
-        return np.asarray([], dtype=float), (), ()
+        return np.asarray([], dtype=float)
     half = width // 2
     x = np.arange(-half, half + 1, dtype=float) / parameters.sample_rate_hz
     kernel = x / float(np.dot(x, x))
     padded = np.pad(values, (half, half), mode="edge")
-    slopes = np.convolve(padded, kernel[::-1], mode="valid")
+    return np.convolve(padded, kernel[::-1], mode="valid")
 
+
+def _derivative_transition_regions(
+    values: np.ndarray, parameters: AerationAlgorithmParameters
+) -> tuple[np.ndarray, tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Return MAD-delimited positive/negative derivative transition zones."""
+    slopes = _regression_slopes(values, parameters)
+    if not slopes.size:
+        return slopes, (), ()
     slope_delta = np.diff(slopes)
     delta_median = float(np.median(slope_delta))
     delta_mad = float(np.median(np.abs(slope_delta - delta_median)))

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from bisect import bisect_left
+from array import array
+from bisect import bisect_left, bisect_right
 import math
 from threading import RLock
 from typing import TYPE_CHECKING, TypeAlias
@@ -47,13 +48,23 @@ class RecordingPlaybackDataSource(DataSource):
         self._metadata = store.metadata(study_id, session_id)
         if self._metadata.status != "completed":
             raise DataSourceError("only completed recordings can be played back")
-        self._frames: tuple[SourceFrame, ...] = store.load(study_id, session_id)
-        if not self._frames:
+        self._chunks = []
+        self._chunk_starts = []
+        self._elapsed = array("d")
+        self._loaded_chunk = None
+        self._chunk_frames = []
+        origin = None
+        # Validate the entire recording first, retaining only its seek index.
+        for chunk, frames in store.iter_chunks(study_id, session_id):
+            if frames:
+                if origin is None:
+                    origin = frames[0].timestamp_utc
+                self._chunk_starts.append(len(self._elapsed))
+                self._chunks.append(chunk)
+                self._elapsed.extend(max(0.0, (frame.timestamp_utc - origin).total_seconds())
+                                     for frame in frames)
+        if not self._elapsed:
             raise DataSourceError("recording contains no frames")
-        self._elapsed = tuple(
-            max(0.0, (frame.timestamp_utc - self._frames[0].timestamp_utc).total_seconds())
-            for frame in self._frames
-        )
         self._state = DataSourceState.DISCONNECTED
         self._index = 0
         self._playback_speed = 1.0
@@ -93,13 +104,13 @@ class RecordingPlaybackDataSource(DataSource):
     @property
     def position_seconds(self) -> float:
         with self._lock:
-            if self._index >= len(self._frames):
+            if self._index >= len(self._elapsed):
                 return self.duration_seconds
             return self._elapsed[self._index]
 
     @property
     def frame_count(self) -> int:
-        return len(self._frames)
+        return len(self._elapsed)
 
     def discover(self) -> tuple[DeviceDescriptor, ...]:
         return (
@@ -160,10 +171,19 @@ class RecordingPlaybackDataSource(DataSource):
         with self._lock:
             if self._state is not DataSourceState.RUNNING:
                 raise DataSourceError("start playback before reading frames")
-            if self._index >= len(self._frames):
+            if self._index >= len(self._elapsed):
                 self._state = DataSourceState.CONFIGURED
                 raise RecordingPlaybackComplete("recording playback is complete")
-            frame = self._frames[self._index]
+            chunk = bisect_right(self._chunk_starts, self._index) - 1
+            if chunk != self._loaded_chunk:
+                from ..storage.recording import RecordingError
+
+                try:
+                    self._chunk_frames = self._chunks[chunk].read()
+                except (OSError, RecordingError) as exc:
+                    raise DataSourceError(f"cannot read recording chunk: {exc}") from exc
+                self._loaded_chunk = chunk
+            frame = self._chunk_frames[self._index - self._chunk_starts[chunk]]
             self._index += 1
             return frame
 
@@ -177,8 +197,8 @@ class RecordingPlaybackDataSource(DataSource):
                 raise DataSourceError("pause playback before seeking")
             clamped = min(max(0.0, value), self.duration_seconds)
             self._index = bisect_left(self._elapsed, clamped)
-            if self._index >= len(self._frames):
-                self._index = len(self._frames) - 1
+            if self._index >= len(self._elapsed):
+                self._index = len(self._elapsed) - 1
             return self._elapsed[self._index]
 
     @property

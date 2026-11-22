@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import lru_cache
 import json
 import logging
 from pathlib import Path
@@ -180,6 +181,13 @@ class Database:
         except Exception:
             self.connection.close()
             raise
+
+    @property
+    def change_token(self) -> tuple[int, int]:
+        """Observe writes on this connection and commits from other connections."""
+        with self._lock:
+            external = self.connection.execute("PRAGMA data_version").fetchone()[0]
+            return self.connection.total_changes, external
 
     @property
     def simulated(self) -> bool:
@@ -397,6 +405,10 @@ class SQLiteStudyRepository:
     def __init__(self, database: Database) -> None:
         self.db = database
 
+    @property
+    def change_token(self):
+        return self.db.change_token
+
     def get(self, study_id: UUID) -> Study | None:
         row = self.db.fetchone(
             "SELECT payload_json FROM studies WHERE id = ?", (str(study_id),)
@@ -498,6 +510,10 @@ class SQLiteEventRepository:
     def __init__(self, database: Database) -> None:
         self.db = database
 
+    @property
+    def change_token(self):
+        return self.db.change_token
+
     def append(self, study_id: UUID, event: Event) -> None:
         if event.study_id != study_id:
             raise ValueError("event.study_id does not match repository study_id")
@@ -593,6 +609,11 @@ class SQLiteAlarmRepository:
 class SQLiteTrendRepository:
     def __init__(self, database: Database) -> None:
         self.db = database
+        self._legacy_timeline = lru_cache(maxsize=2)(self._load_legacy_timeline)
+
+    @property
+    def change_token(self):
+        return self.db.change_token
 
     def append(self, aggregate: TrendAggregate) -> None:
         _ensure_mode(self.db, aggregate.simulated)
@@ -709,6 +730,9 @@ class SQLiteTrendRepository:
     def _normalized_legacy_timeline(
         self, study_id: UUID, *, aggregation_kind: str
     ) -> tuple[TrendAggregate, ...] | None:
+        return self._legacy_timeline(self.change_token, study_id, aggregation_kind)
+
+    def _load_legacy_timeline(self, _token, study_id: UUID, aggregation_kind: str):
         """Recover legacy fromfile trends with invalid active-time positions.
 
         Older builds derived the active position from archived source UTC.  For a

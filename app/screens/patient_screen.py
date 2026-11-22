@@ -372,6 +372,10 @@ class PatientScreen(QWidget):
         self._ventilation = VentilationDetails()
         self._dirty = False
         self._loading = False
+        self._history_needs_refresh = False
+        self._history_timer = QTimer(self)
+        self._history_timer.setSingleShot(True)
+        self._history_timer.timeout.connect(self._refresh_visible_history)
         self._completion_ids: dict[str, UUID] = {}
         self.setStyleSheet(f"background-color:{C['bg_main']};")
 
@@ -977,7 +981,7 @@ class PatientScreen(QWidget):
             )
             self._ventilation = patient.ventilation
             self._set_ivl("yes" if patient.ventilation.enabled else "no")
-            self._load_history(patient.id)
+            self.refresh_history()
             self._update_age()
         finally:
             self._loading = False
@@ -992,14 +996,14 @@ class PatientScreen(QWidget):
             return
         try:
             self._study_lifecycle.select_patient(self._current_patient_id)
-            study = self._study_lifecycle.create_study()
+            self._study_lifecycle.create_study()
             self._study_lifecycle.prepare()
         except StudyLifecycleError:
             QMessageBox.warning(
                 self, t("study_action_error_title"), t("study_finish_current_first")
             )
             return
-        self._load_history(study.patient_id)
+        self.refresh_history()
         QMessageBox.information(
             self, t("study_linked_title"), t("study_linked_message")
         )
@@ -1033,7 +1037,24 @@ class PatientScreen(QWidget):
 
     def refresh_history(self) -> None:
         if self._current_patient_id is not None:
-            self._load_history(self._current_patient_id)
+            self._history_needs_refresh = True
+            if self._box_history.isVisible():
+                self._history_timer.start(0)
+
+    def set_history_visible(self, visible: bool) -> None:
+        self._box_history.setVisible(visible)
+        self._refresh_visible_history()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._refresh_visible_history()
+
+    def _refresh_visible_history(self) -> None:
+        patient_id = self._current_patient_id
+        if self._history_needs_refresh and patient_id is not None and self._box_history.isVisible():
+            self._history_needs_refresh = False
+            self._history_timer.stop()
+            self._load_history(patient_id)
 
     @staticmethod
     def _conclusion_text(conclusion: str | None) -> str:

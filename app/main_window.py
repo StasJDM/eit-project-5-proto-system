@@ -370,7 +370,7 @@ class MainWindow(QMainWindow):
         patient = self._screens["patient"]
         set_visible(visible("patient.card"), patient._box_card)
         set_visible(visible("patient.clinical"), patient._box_clinical)
-        set_visible(visible("patient.history"), patient._box_history)
+        patient.set_history_visible(visible("patient.history"))
         set_visible(
             visible("patient.controls"),
             patient._sep, patient._btn_start, patient._btn_save, patient._btn_link,

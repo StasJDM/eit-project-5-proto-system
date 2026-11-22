@@ -5,15 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from collections.abc import Callable
-from statistics import median
 from threading import RLock
 from uuid import UUID
 
 from .events import ApplicationEvent, EventBus, EventType
 from .monitoring import MonitoringService, TrendSample
 from .ports import TrendRepository
+from .trend_buffer import TrendWindow
 from .studies import StudyLifecycleService
-from ..domain import DataQuality, StudyStatus, TrendAggregate, utc_now
+from ..domain import StudyStatus, TrendAggregate, utc_now
 
 
 TREND_INTERVAL_SECONDS = 15.0
@@ -52,8 +52,8 @@ class TrendService:
         self._source_time_origin: datetime | None = None
         self._source_position_origin = 0.0
         self._lock = RLock()
-        self._interval_frames: list[TrendSample] = []
-        self._cycle_frames: list[TrendSample] = []
+        self._interval_frames = TrendWindow()
+        self._cycle_frames = TrendWindow()
         self._last_phase: float | None = None
         self._cycle_started = False
         self._unsubscribe_frames = monitoring.subscribe_trend_samples(self._on_frame)
@@ -93,6 +93,10 @@ class TrendService:
                 study_id, start_utc, end_utc, aggregation_kind=aggregation_kind
             )),
         )
+
+    @property
+    def change_token(self):
+        return getattr(self._repository, "change_token", None)
 
     def bounds(self, study_id: UUID):
         return self._repository.bounds(study_id)
@@ -163,7 +167,7 @@ class TrendService:
             )
         with self._lock:
             if self._interval_frames and (
-                frame.timestamp_utc - self._interval_frames[0].timestamp_utc
+                frame.timestamp_utc - self._interval_frames.first.timestamp_utc
             ).total_seconds() >= self._interval_seconds:
                 self._flush_frames(self._interval_frames, "interval")
                 self._interval_frames.clear()
@@ -183,7 +187,8 @@ class TrendService:
                 if self._cycle_started and len(self._cycle_frames) > 1:
                     self._flush_frames(self._cycle_frames, "breath_cycle")
                 self._cycle_started = True
-                self._cycle_frames = [frame]
+                self._cycle_frames.clear()
+                self._cycle_frames.append(frame)
 
     def _on_study_changed(self, _event: ApplicationEvent) -> None:
         if self._lifecycle.status in {
@@ -198,111 +203,46 @@ class TrendService:
             self._flush_frames(self._interval_frames, "interval")
             self._interval_frames.clear()
 
-    def _flush_frames(self, frames: list[TrendSample], kind: str) -> None:
+    def _flush_frames(self, frames: TrendWindow, kind: str) -> None:
         study = self._lifecycle.current_study
         session = self._lifecycle.current_session
         if not frames or study is None or session is None or session.started_at_utc is None:
             return
         hidden_metrics = set(self._hidden_metrics_provider())
-        roi_count = max((len(frame.roi_values) for frame in frames), default=0)
-        regional = [
-            [
-                frame.roi_values[index]
-                for frame in frames
-                if index < len(frame.roi_values) and frame.roi_values[index] is not None
-            ]
-            for index in range(roi_count)
-        ]
-        calculated_roi_values = tuple(
-            median(float(value) for value in values) if values else None
-            for values in regional
-        )
-        roi_values = tuple(
-            value
-            if (
-                f"roi_{index}_tvi_au" not in hidden_metrics
-                or f"roi_{index}_percent" not in hidden_metrics
-            )
-            else None
-            for index, value in enumerate(calculated_roi_values, start=1)
-        )
-        bands = len(calculated_roi_values) // 2
-        relevant_quality = [
-            frame for frame in frames
-            if frame.quality_reason != "insufficient_data" or frame is frames[-1]
-        ]
-        quality = _worst_quality(frame.quality for frame in relevant_quality)
-        quality_reason = next(
-            (
-                frame.quality_reason for frame in reversed(relevant_quality)
-                if frame.quality is quality and frame.quality_reason
-            ),
-            None,
-        )
-        end = frames[-1].timestamp_utc
-        global_values = [
-            float(frame.global_value) for frame in frames
-            if frame.global_value is not None
-        ]
-        metric_names = sorted({
-            name for frame in frames for name, _value in frame.metric_values
-            if name not in hidden_metrics
-        })
-        metric_values = {
-            name: [
-                float(value)
-                for frame in frames
-                for metric_name, value in frame.metric_values
-                if metric_name == name and value is not None
-            ]
-            for name in metric_names
-        }
+        last = frames.last
+        quality, quality_reason = frames.quality()
         aggregated_metrics = {
-            name: (median(values) if values else None)
-            for name, values in metric_values.items()
+            name: frames.median(f"metric:{name}")
+            for name in frames.metric_names if name not in hidden_metrics
         }
-        # LuMon defines Aeration/MLI as the mean plethysmogram value over the
-        # analysis interval. Keep it alongside the other calculated metrics.
         if "mli_au" not in hidden_metrics:
-            aggregated_metrics["mli_au"] = (
-                sum(global_values) / len(global_values) if global_values else None
-            )
-        right_samples = [
-            sum(float(value) for value in frame.roi_values[:bands] if value is not None)
-            for frame in frames
-            if bands and all(value is not None for value in frame.roi_values[:bands])
-        ]
-        left_samples = [
-            sum(float(value) for value in frame.roi_values[bands:] if value is not None)
-            for frame in frames
-            if bands and all(value is not None for value in frame.roi_values[bands:])
-        ]
+            aggregated_metrics["mli_au"] = frames.mean_global()
+        right_value, left_value = frames.side_medians()
+        roi_values = tuple(
+            frames.median(f"roi:{i}")
+            if (f"roi_{i + 1}_tvi_au" not in hidden_metrics
+                or f"roi_{i + 1}_percent" not in hidden_metrics)
+            else None
+            for i in range(frames.roi_count)
+        )
         aggregate = TrendAggregate(
             study_id=study.id,
             session_id=session.id,
-            interval_start_utc=frames[0].timestamp_utc,
-            interval_end_utc=end,
+            interval_start_utc=frames.first.timestamp_utc,
+            interval_end_utc=last.timestamp_utc,
             position_seconds=(
-                frames[-1].position_seconds
-                if frames[-1].position_seconds is not None
-                else session.duration_seconds(end)
+                last.position_seconds
+                if last.position_seconds is not None
+                else session.duration_seconds(last.timestamp_utc)
             ),
             aggregation_kind=kind,
             sample_count=len(frames),
-            global_value=median(global_values) if global_values else None,
-            right_value=(
-                median(right_samples)
-                if right_samples and "right_percent" not in hidden_metrics
-                else None
-            ),
-            left_value=(
-                median(left_samples)
-                if left_samples and "left_percent" not in hidden_metrics
-                else None
-            ),
+            global_value=frames.median("global"),
+            right_value=right_value if "right_percent" not in hidden_metrics else None,
+            left_value=left_value if "left_percent" not in hidden_metrics else None,
             roi_values=roi_values,
             respiratory_rate_bpm=(
-                frames[-1].respiratory_rate_bpm
+                last.respiratory_rate_bpm
                 if "rr_bpm" not in hidden_metrics
                 else None
             ),
@@ -313,13 +253,3 @@ class TrendService:
             simulated=study.simulated,
         )
         self._repository.append(aggregate)
-
-
-def _worst_quality(values) -> DataQuality:
-    priority = {
-        DataQuality.VALID: 0,
-        DataQuality.DEGRADED: 1,
-        DataQuality.STALE: 2,
-        DataQuality.UNAVAILABLE: 3,
-    }
-    return max(values, key=priority.__getitem__, default=DataQuality.UNAVAILABLE)

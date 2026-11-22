@@ -160,11 +160,16 @@ def _median_reduce(values: np.ndarray, factor: int) -> np.ndarray:
     values = np.asarray(values, dtype=float)
     if factor <= 1 or values.size == 0:
         return values
-    reduced = []
-    for start in range(0, values.size, factor):
-        group = values[start:start + factor]
-        reduced.append(float(np.median(group)) if np.all(np.isfinite(group)) else np.nan)
-    return np.asarray(reduced, dtype=float)
+    full = values.size // factor * factor
+    groups = values[:full].reshape(-1, factor)
+    reduced = np.full(len(groups), np.nan)
+    valid = np.all(np.isfinite(groups), axis=1)
+    if np.any(valid):
+        reduced[valid] = np.median(groups[valid], axis=1)
+    if full < values.size:
+        tail = values[full:]
+        reduced = np.append(reduced, np.median(tail) if np.all(np.isfinite(tail)) else np.nan)
+    return reduced
 
 
 def _last_reduce(values: np.ndarray, factor: int) -> np.ndarray:
@@ -1370,20 +1375,25 @@ class _MetricValueTable(QTableWidget):
         self._rendered_times = times.copy()
         self._rendered_series = [values.copy() for values in arrays]
 
-        self.setColumnCount(column_count)
-        self.setHorizontalHeaderLabels([
-            _format_elapsed(float(value)) for value in times[:column_count]
-        ])
-        for row, values in enumerate(arrays):
-            for column in range(column_count):
-                value = values[column] if column < len(values) else np.nan
-                item = QTableWidgetItem(self._format_value(float(value)))
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                item.setData(
-                    Qt.UserRole,
-                    None if not np.isfinite(value) else float(value),
-                )
-                self.setItem(row, column, item)
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Fixed)
+        try:
+            self.setColumnCount(column_count)
+            self.setHorizontalHeaderLabels([
+                _format_elapsed(float(value)) for value in times[:column_count]
+            ])
+            for row, values in enumerate(arrays):
+                for column in range(column_count):
+                    value = values[column] if column < len(values) else np.nan
+                    item = QTableWidgetItem(self._format_value(float(value)))
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    item.setData(
+                        Qt.UserRole,
+                        None if not np.isfinite(value) else float(value),
+                    )
+                    self.setItem(row, column, item)
+        finally:
+            header.setSectionResizeMode(QHeaderView.ResizeToContents)
         QTimer.singleShot(0, self._scroll_to_latest_if_following)
 
 
@@ -1679,12 +1689,14 @@ class TrendsScreen(QWidget):
                 self._apply_engineering_settings
             )
             self._apply_engineering_settings(engineering_settings.current)
+        self._study_token = None
+        self._view_key = None
         self._study_ids: list[UUID] = []
         self._setup_ui()
         self._refresh()
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh)
+        self._timer.timeout.connect(self._refresh_visible)
         # Persisted points change at most every 15 seconds; avoid repeatedly
         # decoding a full 24-hour range at paint-frame frequency.
         self._timer.start(1000)
@@ -1711,6 +1723,7 @@ class TrendsScreen(QWidget):
                 wave.set_fill_enabled(self._waveform_fill_enabled)
             for tab in self._trend_tabs():
                 tab.set_decimal_places(self._trend_decimal_places)
+            self._view_key = None
             self._refresh()
 
     def closeEvent(self, event) -> None:
@@ -1778,6 +1791,7 @@ class TrendsScreen(QWidget):
         outer.addWidget(self.bottom)
 
         self.tab_bar.tab_changed.connect(self.stack.setCurrentIndex)
+        self.tab_bar.tab_changed.connect(lambda _index: self._refresh())
         i18n.language_changed.connect(self.retranslate)
 
     def _visible_metrics(self, metrics):
@@ -1820,8 +1834,25 @@ class TrendsScreen(QWidget):
             self.tab_all.wave,
         )
 
+    def _refresh_visible(self):
+        if self.isVisible():
+            self._refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh()
+
     def _refresh(self):
+        self._sync_studies()
+        trend_token = getattr(self._trend_service, "change_token", None)
+        event_token = getattr(self._event_repository, "change_token", None)
+        key = (trend_token, event_token, self.study_combo.currentData(),
+               self.range_combo.currentData(), self.time_scroll.value(), self.stack.currentIndex())
+        if (trend_token is not None and (event_token is not None or self._event_repository is None)
+                and self._view_key == key):
+            return
         waves, events = self._stored_view()
+        self._view_key = key
         idx = self.stack.currentIndex()
         if idx == 0:
             self.tab_global.refresh(waves)
@@ -1840,6 +1871,10 @@ class TrendsScreen(QWidget):
     def _sync_studies(self):
         if self._study_repository is None:
             return
+        token = getattr(self._study_repository, "change_token", None)
+        if token is not None and token == self._study_token:
+            return
+        self._study_token = token
         selected = self.study_combo.currentData()
         studies = tuple(self._study_repository.list_all())
         ids = [study.id for study in studies]
@@ -1865,33 +1900,12 @@ class TrendsScreen(QWidget):
         self.study_combo.blockSignals(False)
 
     def _stored_view(self):
-        self._sync_studies()
-        empty = {
-            "time": np.asarray([], dtype=float), "global": np.asarray([], dtype=float),
-            "r": np.asarray([], dtype=float), "l": np.asarray([], dtype=float),
-            "rois": [np.asarray([], dtype=float) for _ in range(self._roi_count)],
-            "r_absolute": np.asarray([], dtype=float),
-            "l_absolute": np.asarray([], dtype=float),
-            "axis_range": (0.0, float(self.range_combo.currentData() or 300)),
-            "bad_intervals": (),
-            "metrics": {
-                code: np.asarray([], dtype=float)
-                for _label, code, _unit in self._calculated_metrics
-            },
-            "cycles": {
-                "global": np.asarray([], dtype=float),
-                "r": np.asarray([], dtype=float),
-                "l": np.asarray([], dtype=float),
-                "rois": [
-                    np.asarray([], dtype=float) for _ in range(self._roi_count)
-                ],
-            },
-        }
+        window = int(self.range_combo.currentData() or 300)
+        empty = {"time": np.asarray([], dtype=float), "metrics": {}, "axis_range": (0.0, float(window))}
         value = self.study_combo.currentData()
         if self._trend_service is None or value is None:
             return empty, ()
         study_id = UUID(value)
-        window = int(self.range_combo.currentData() or 300)
 
         def marker_events(start: float, end: float):
             if self._event_repository is None:
@@ -1917,130 +1931,28 @@ class TrendsScreen(QWidget):
         persisted = self._trend_service.read_position(
             study_id, start, end, aggregation_kind=aggregation_kind
         ).points
-        cycles = self._trend_service.read_position(
-            study_id, start, end, aggregation_kind="breath_cycle"
-        ).points
-        baseline = self._trend_service.baseline(
-            study_id, aggregation_kind=aggregation_kind
-        )
-        points = []
+        # Current chart tabs display the persisted metric codes directly.
+        # Preserve empty intervals on both the numeric table and chart time axes.
+        codes = [code for _label, code, _unit in self.stack.currentWidget().metrics]
+        series = {code: [] for code in codes}
+        times = []
         for point in persisted:
-            if points and point.position_seconds - points[-1].position_seconds > 22.5:
-                points.append(None)
-            points.append(point)
-        def values(name):
-            return np.asarray([
-                (
-                    getattr(point, name)
-                    if point is not None
-                    else np.nan
-                )
-                for point in points
-            ], dtype=float)
-        def calculated_values(code):
-            result = []
-            for point in points:
-                if point is None:
-                    result.append(np.nan)
-                    continue
-                value = point.metric_value(code)
-                if value is None and code == "rr_bpm":
-                    value = point.respiratory_rate_bpm
-                result.append(np.nan if value is None else value)
-            return np.asarray(result, dtype=float)
-        roi_count = max((len(point.roi_values) for point in persisted), default=8)
-        times = np.asarray([
-                point.position_seconds if point is not None else (
-                    points[index - 1].position_seconds + 15.0
-                )
-                for index, point in enumerate(points)
-            ], dtype=float)
-        global_absolute = values("global_value")
-        right_absolute = values("right_value")
-        left_absolute = values("left_value")
-        roi_absolute = [np.asarray([
-                (
-                    point.roi_values[index]
-                    if point is not None
-                    and index < len(point.roi_values)
-                    else np.nan
-                )
-                for point in points
-            ], dtype=float) for index in range(roi_count)]
-
-        def cycle_values(name):
-            return np.asarray([
-                getattr(point, name)
-                for point in cycles
-            ], dtype=float)
-
-        cycle_roi_count = max((len(point.roi_values) for point in cycles), default=roi_count)
-        cycle_rois = [np.asarray([
-            (
-                point.roi_values[index]
-                if index < len(point.roi_values)
-                else np.nan
-            )
-            for point in cycles
-        ], dtype=float) for index in range(cycle_roi_count)]
-        waves = {
-            "time": times,
-            "global": _relative_percent(
-                global_absolute, baseline.global_value if baseline else None
-            ),
-            "r": _relative_percent(
-                right_absolute, baseline.right_value if baseline else None
-            ),
-            "l": _relative_percent(
-                left_absolute, baseline.left_value if baseline else None
-            ),
-            "rois": [
-                _relative_percent(
-                    values_,
-                    baseline.roi_values[index]
-                    if baseline and index < len(baseline.roi_values) else None,
-                )
-                for index, values_ in enumerate(roi_absolute)
-            ],
-            "r_absolute": right_absolute,
-            "l_absolute": left_absolute,
-            "axis_range": (start, end),
-            "bad_intervals": (),
-            "metrics": {
-                code: calculated_values(code)
-                for _label, code, _unit in self._calculated_metrics
-            },
-            "cycles": {
-                "global": _relative_percent(
-                    cycle_values("global_value"),
-                    baseline.global_value if baseline else None,
-                ),
-                "r": _relative_percent(
-                    cycle_values("right_value"),
-                    baseline.right_value if baseline else None,
-                ),
-                "l": _relative_percent(
-                    cycle_values("left_value"),
-                    baseline.left_value if baseline else None,
-                ),
-                "rois": [
-                    _relative_percent(
-                        values_,
-                        baseline.roi_values[index]
-                        if baseline and index < len(baseline.roi_values) else None,
-                    )
-                    for index, values_ in enumerate(cycle_rois)
-                ],
-            },
-        }
+            if times and point.position_seconds - times[-1] > 22.5:
+                times.append(times[-1] + 15.0)
+                for values in series.values():
+                    values.append(np.nan)
+            times.append(point.position_seconds)
+            metrics = dict(point.metric_values)
+            if metrics.get("rr_bpm") is None:
+                metrics["rr_bpm"] = point.respiratory_rate_bpm
+            for code in codes:
+                series[code].append(metrics.get(code))
         factor = _trend_median_factor(self._trend_downsampling_mode, window)
-        waves["time"] = _last_reduce(waves["time"], factor)
-        waves["metrics"] = {
-            code: _median_reduce(values_, factor)
-            for code, values_ in waves["metrics"].items()
-        }
-        waves["downsampling_factor"] = factor
-        return waves, marker_events(start, end)
+        return {
+            "time": _last_reduce(np.asarray(times, dtype=float), factor),
+            "axis_range": (start, end),
+            "metrics": {code: _median_reduce(values, factor) for code, values in series.items()},
+        }, marker_events(start, end)
 
     def retranslate(self):
         self.tab_bar.retranslate()
@@ -2048,4 +1960,5 @@ class TrendsScreen(QWidget):
         for tab in self._trend_tabs():
             tab.retranslate()
         self._study_ids = []
+        self._study_token = self._view_key = None
         self._sync_studies()

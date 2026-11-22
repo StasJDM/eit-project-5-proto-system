@@ -106,11 +106,10 @@ class PeepProcessor:
         )
         if count < 2:
             return PeepResult(**common)
-        maps = np.stack(tuple(self._maps)[-count:])
         global_values = np.asarray(tuple(self._global)[-count:], dtype=float)
         low = int(np.argmin(global_values))
         high = int(np.argmax(global_values))
-        tidal_change = np.abs(maps[high] - maps[low])
+        tidal_change = np.abs(self._maps[high - count] - self._maps[low - count])
         return calculate_peep_metrics(
             tidal_change,
             silent_threshold_percent=self.silent_threshold_percent,

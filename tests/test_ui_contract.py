@@ -875,12 +875,52 @@ class UiContractTest(unittest.TestCase):
             lifecycle.stop(conclusion="Stable")
             screen = window._screens["patient"]
             screen.load_patient(patient)
+            window.show()
+            window._switch_screen("patient")
             self.assertEqual(len(screen._history_rows), 1)
             with patch("app.screens.patient_screen.QMessageBox.information") as info:
                 screen._history_rows[0]._btn.click()
                 info.assert_called_once()
             self.assertEqual(lifecycle.current_study.id, study.id)
             self.assertEqual(lifecycle.current_study.status.value, "completed")
+        finally:
+            window.close()
+
+    def test_start_defers_history_reload_and_combines_study_status_changes(self):
+        window = MainWindow()
+        try:
+            patient = Patient(external_id="P-UI-HISTORY-START")
+            window._container.repositories.patients.save(patient)
+            lifecycle = window._container.study_lifecycle
+            screen = window._screens["patient"]
+            window.show()
+
+            with patch.object(screen, "_load_history", wraps=screen._load_history) as load:
+                screen.load_patient(patient)
+                window._screens["main"].left.btn_start.click()
+                self.app.processEvents()
+                self.assertEqual(lifecycle.status.value, "running")
+                load.assert_not_called()
+
+                window._switch_screen("patient")
+                load.assert_called_once_with(patient.id)
+                self.assertEqual(screen._history_rows[0]._status.value, "running")
+
+                screen.set_history_visible(False)
+                window._container.monitoring_controller.stop()
+                self.app.processEvents()
+                self.assertEqual(load.call_count, 1)
+
+                screen.set_history_visible(True)
+                self.assertEqual(load.call_count, 2)
+                self.assertEqual(screen._history_rows[0]._status.value, "completed")
+
+                screen._btn_start.click()
+                self.assertEqual(lifecycle.status.value, "running")
+                self.assertEqual(load.call_count, 2)
+                self.app.processEvents()
+                self.assertEqual(load.call_count, 3)
+                self.assertEqual(screen._history_rows[0]._status.value, "running")
         finally:
             window.close()
 

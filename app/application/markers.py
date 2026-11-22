@@ -41,6 +41,7 @@ class EventMarkerService:
         self._repository = repository
         self._lifecycle = lifecycle
         self._event_bus = event_bus
+        self._marker_cache = None
         self._clock = clock
         self._position_provider = position_provider
 
@@ -128,10 +129,17 @@ class EventMarkerService:
         study = self._lifecycle.current_study
         if study is None:
             return ()
-        return tuple(
+        token = getattr(self._repository, "change_token", None)
+        key = (study.id, token)
+        cache = self._marker_cache
+        if token is not None and cache is not None and cache[0] == key:
+            return cache[1]
+        markers = tuple(
             item for item in self._repository.list_for_study(study.id)
             if item.category is EventCategory.MARKER
         )
+        self._marker_cache = (key, markers)
+        return markers
 
     def markers_between(self, start_seconds: float, end_seconds: float) -> tuple[Event, ...]:
         if end_seconds < start_seconds:

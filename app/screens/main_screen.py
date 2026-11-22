@@ -8,11 +8,12 @@ Layout:
   └────────────────────────────┴────────────────────────────┘
 """
 
+from .base_screen import LiveScreen
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QDialog, QFrame, QSizePolicy, QGridLayout
 )
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
 
 from ..application import (
@@ -324,7 +325,7 @@ class LeftPanel(QWidget):
 
 # ── Main screen ───────────────────────────────────────────────────────────────
 
-class MainScreen(QWidget):
+class MainScreen(LiveScreen):
     """Assembled main monitoring screen backed by an injected read model."""
 
     def __init__(
@@ -396,9 +397,7 @@ class MainScreen(QWidget):
         lay.addWidget(self.waves, stretch=1)
 
         # ── Timers ────────────────────────────────────────────────────────────
-        self._paint_timer = QTimer(self)
-        self._paint_timer.timeout.connect(self._on_paint)
-        self._paint_timer.start(PAINT_MS)
+        self.start_refresh(PAINT_MS)
 
         timers = SessionTimers.instance(self)
         timers.updated.connect(self._on_timers_updated)
@@ -500,6 +499,9 @@ class MainScreen(QWidget):
         )
 
     # ── Timer callbacks ───────────────────────────────────────────────────────
+
+    def _scale_widget(self):
+        return self.left.lung_viz
 
     def _on_paint(self, *_args):
         active_profile = getattr(self._monitoring, "section_profile", None)

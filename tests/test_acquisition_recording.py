@@ -1,3 +1,5 @@
+from collections import Counter
+import zipfile
 import json
 import time
 import unittest
@@ -82,6 +84,27 @@ class AcquisitionRecordingTest(unittest.TestCase):
                 writer.append(item)
             writer.close()
             self.assertEqual(store.load(study_id, session_id), expected)
+
+    def test_recorded_block_extracts_each_required_array_once(self):
+        with TemporaryDirectory() as directory:
+            store = AcquisitionRecordingStore(directory, simulated=True)
+            ids = uuid4(), uuid4()
+            writer = store.open_writer(*ids, frame_rate_hz=25)
+            expected = tuple(eit_frame(index) for index in range(64))
+            for frame in expected:
+                writer.append(frame)
+            writer.close()
+            opened = Counter()
+            original = zipfile.ZipFile.open
+
+            def observe(archive, name, *args, **kwargs):
+                opened[name] += 1
+                return original(archive, name, *args, **kwargs)
+
+            with patch.object(zipfile.ZipFile, "open", observe):
+                self.assertEqual(store.load(*ids), expected)
+            self.assertEqual(len(opened), 10)
+            self.assertEqual(set(opened.values()), {1})
 
     def test_recovery_preserves_confirmed_chunks_after_interruption(self):
         with TemporaryDirectory() as directory:

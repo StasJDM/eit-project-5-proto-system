@@ -8,11 +8,12 @@
 from datetime import timedelta
 
 import numpy as np
+from .base_screen import LiveScreen
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy, QGridLayout, QStackedWidget, QScrollArea, QComboBox,
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QCursor
 from ..waveform_draw import draw_filled_waveform
 
@@ -1309,7 +1310,7 @@ class PeepTab(QWidget):
         self._cov_label.setText(t("peep_center") + " (CoV)")
 
 
-class AnalysisScreen(QWidget):
+class AnalysisScreen(LiveScreen):
     """Экран АНАЛИЗ с вкладками аэрации и типа дыхания."""
 
     def __init__(
@@ -1390,9 +1391,7 @@ class AnalysisScreen(QWidget):
         self._switch_tab(2)  # «Глобальная» по умолчанию
 
         # ── Таймеры ───────────────────────────────────────────────────────────
-        self._paint_timer = QTimer(self)
-        self._paint_timer.timeout.connect(self._on_paint)
-        self._paint_timer.start(PAINT_MS)
+        self.start_refresh(PAINT_MS)
 
         timers = SessionTimers.instance(self)
         timers.updated.connect(self._on_timers_updated)
@@ -1452,6 +1451,9 @@ class AnalysisScreen(QWidget):
                 custom_low=settings.custom_color_low,
                 custom_high=settings.custom_color_high,
             )
+
+    def _scale_widget(self):
+        return self._stack.currentWidget().findChild(LungVizWidget)
 
     def _on_paint(self):
         active_profile = getattr(self._monitoring, "section_profile", None)

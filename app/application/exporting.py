@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import csv
 import hashlib
-import io
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 from uuid import UUID
 from xml.etree import ElementTree
+from xml.parsers.expat import ParserCreate
 from xml.sax.saxutils import escape
 import zipfile
 
@@ -103,19 +104,20 @@ class StudyExportService:
         if now.tzinfo is None:
             raise ExportError("export timestamp must be timezone-aware")
         studies = tuple(self._required_study(item) for item in dict.fromkeys(study_ids))
-        payload = self._build_payload(studies, selected, now)
         root = Path(destination)
         root.mkdir(parents=True, exist_ok=True)
         package_name = "eit_export_" + now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         target = root / package_name
         temporary = Path(tempfile.mkdtemp(prefix=f".{package_name}-", dir=root))
         try:
-            if fmt == "json":
-                generated = [self._write_json(temporary, payload)]
-            elif fmt == "csv":
-                generated = self._write_csv(temporary, payload, selected)
-            else:
-                generated = [self._write_xlsx(temporary, payload, selected)]
+            with tempfile.TemporaryDirectory(dir=temporary) as scratch:
+                payload = self._build_payload(studies, selected, now, Path(scratch))
+                if fmt == "json":
+                    generated = [self._write_json(temporary, payload)]
+                elif fmt == "csv":
+                    generated = self._write_csv(temporary, payload, selected)
+                else:
+                    generated = [self._write_xlsx(temporary, payload, selected)]
             manifest = {
                 "schema_version": EXPORT_SCHEMA_VERSION,
                 "created_at_utc": now.astimezone(timezone.utc).isoformat(),
@@ -158,25 +160,31 @@ class StudyExportService:
         directory = self._recording_store.root / str(study_id)
         return sum(path.stat().st_size for path in directory.glob("**/*") if path.is_file())
 
-    def _raw_frames(self, study_id: UUID):
-        if self._recording_store is None:
-            return ()
-        session = self._repositories.sessions.get_for_study(study_id)
-        if session is None:
-            return ()
-        try:
-            return self._recording_store.load(study_id, session.id)
-        except (FileNotFoundError, RecordingError):
-            return ()
+    def _stage_raw_frames(self, study_id, session, scratch):
+        # A damaged later chunk invalidates the entire raw-data section.
+        # Stage one JSON object per line so no partial recording escapes.
+        path = scratch / str(study_id)
+        with path.open("wb") as output:
+            if self._recording_store is not None and session is not None:
+                try:
+                    for _, frames in self._recording_store.iter_chunks(study_id, session.id):
+                        for frame in frames:
+                            row = _raw_frame_data(frame)
+                            output.write(json.dumps(row, ensure_ascii=False,
+                                                    separators=(",", ":")).encode("utf-8"))
+                            output.write(b"\n")
+                except (FileNotFoundError, RecordingError):
+                    output.truncate(0)
+        return path
 
-    def _build_payload(self, studies, selected: set[str], now: datetime) -> dict[str, Any]:
+    def _build_payload(self, studies, selected: set[str], now: datetime, scratch: Path):
         entries = []
         for study in studies:
-            patient = self._repositories.patients.get(study.patient_id)
             session = self._repositories.sessions.get_for_study(study.id)
-            trends = self._all_trends(study.id)
+            trends = self._all_trends(study.id) if selected & {"metrics", "trends"} else ()
             entry: dict[str, Any] = {"study_id": str(study.id)}
             if "metadata" in selected:
+                patient = self._repositories.patients.get(study.patient_id)
                 entry["metadata"] = {
                     "patient": serialize_model(patient) if patient else None,
                     "study": serialize_model(study),
@@ -192,7 +200,7 @@ class StudyExportService:
                     for item in self._repositories.events.list_for_study(study.id)
                 ]
             if "raw_data" in selected:
-                entry["raw_data"] = [_raw_frame_data(item) for item in self._raw_frames(study.id)]
+                entry["raw_data"] = self._stage_raw_frames(study.id, session, scratch)
             entries.append(entry)
         return {
             "schema_version": EXPORT_SCHEMA_VERSION,
@@ -204,34 +212,52 @@ class StudyExportService:
     @staticmethod
     def _write_json(directory: Path, payload: Mapping[str, Any]) -> Path:
         path = directory / "data.json"
-        _atomic_write(path, _json_bytes(payload, pretty=True))
+        with path.open("wb") as output:
+            header = {key: value for key, value in payload.items() if key != "studies"}
+            output.write(_json_bytes(header)[:-1] + b',"studies":[')
+            for index, entry in enumerate(payload["studies"]):
+                if index:
+                    output.write(b",")
+                metadata = {key: value for key, value in entry.items() if key != "raw_data"}
+                output.write(_json_bytes(metadata)[:-1])
+                if "raw_data" in entry:
+                    output.write(b',"raw_data":[')
+                    with entry["raw_data"].open("rb") as rows:
+                        for number, line in enumerate(rows):
+                            if number:
+                                output.write(b",")
+                            output.write(line)
+                    output.write(b"]")
+                output.write(b"}")
+            output.write(b"]}")
+            output.flush()
+            os.fsync(output.fileno())
         return path
 
     @staticmethod
     def _write_csv(directory: Path, payload: Mapping[str, Any], selected: set[str]) -> list[Path]:
-        tables = _tables(payload, selected)
-        paths: list[Path] = []
-        for name, rows in tables.items():
+        paths = []
+        for name in EXPORT_CATEGORIES:
+            if name not in selected:
+                continue
             path = directory / f"{name}.csv"
-            columns = _columns(rows)
-            buffer = io.StringIO(newline="")
-            writer = csv.DictWriter(buffer, fieldnames=columns, delimiter=CSV_DELIMITER, lineterminator="\r\n")
-            writer.writeheader()
-            writer.writerows({key: _csv_value(row.get(key)) for key in columns} for row in rows)
-            _atomic_write(path, buffer.getvalue().encode(CSV_ENCODING))
+            with path.open("w", encoding=CSV_ENCODING, newline="") as output:
+                rows = _table_rows(payload, name)
+                for columns, batch in _table_batches(rows, limit=None, directory=directory):
+                    writer = csv.DictWriter(output, fieldnames=columns, delimiter=CSV_DELIMITER,
+                                            lineterminator="\r\n")
+                    writer.writeheader()
+                    writer.writerows({key: _csv_value(row.get(key)) for key in columns}
+                                     for row in batch)
+                output.flush()
+                os.fsync(output.fileno())
             paths.append(path)
         return paths
 
     @staticmethod
     def _write_xlsx(directory: Path, payload: Mapping[str, Any], selected: set[str]) -> Path:
         path = directory / "data.xlsx"
-        sheets: list[tuple[str, list[dict[str, Any]]]] = []
-        for name, rows in _tables(payload, selected).items():
-            chunks = [rows[index:index + EXCEL_MAX_ROWS - 1] for index in range(0, max(1, len(rows)), EXCEL_MAX_ROWS - 1)]
-            for index, chunk in enumerate(chunks, 1):
-                title = name[:28] + (f"_{index}" if len(chunks) > 1 else "")
-                sheets.append((title[:31], chunk))
-        _write_workbook(path, sheets)
+        _write_workbook(path, payload, selected)
         validate_xlsx(path)
         return path
 
@@ -244,7 +270,9 @@ def validate_xlsx(path: Path | str) -> None:
         ElementTree.fromstring(archive.read("xl/workbook.xml"))
         for name in archive.namelist():
             if name.startswith("xl/worksheets/") and name.endswith(".xml"):
-                ElementTree.fromstring(archive.read(name))
+                with archive.open(name) as sheet:
+                    # Validate well-formed XML without retaining the worksheet tree.
+                    ParserCreate().ParseFile(sheet)
 
 
 def _categories(values: Iterable[str]) -> set[str]:
@@ -293,28 +321,37 @@ def _raw_frame_data(frame) -> dict[str, Any]:
     raise ExportError(f"unsupported raw frame type: {type(frame).__name__}")
 
 
-def _tables(payload: Mapping[str, Any], selected: set[str]) -> dict[str, list[dict[str, Any]]]:
-    tables: dict[str, list[dict[str, Any]]] = {}
-    if "metadata" in selected:
-        tables["metadata"] = []
-    for category in ("metrics", "trends", "events", "raw_data"):
-        if category in selected:
-            tables[category] = []
+def _table_rows(payload, name):
     for entry in payload["studies"]:
         study_id = entry["study_id"]
-        if "metadata" in selected:
-            metadata = entry.get("metadata", {})
-            row = {"study_id": study_id}
-            row.update(_flatten(metadata))
-            tables["metadata"].append(row)
-        for category in ("metrics", "trends", "events", "raw_data"):
-            if category not in selected:
-                continue
-            for value in entry.get(category, []):
-                row = {"study_id": study_id}
-                row.update(_flatten(value))
-                tables[category].append(row)
-    return tables
+        if name == "metadata":
+            yield {"study_id": study_id, **_flatten(entry["metadata"])}
+        elif name == "raw_data":
+            with entry[name].open("rb") as rows:
+                for line in rows:
+                    yield {"study_id": study_id, **_flatten(json.loads(line))}
+        else:
+            for value in entry[name]:
+                yield {"study_id": study_id, **_flatten(value)}
+
+
+def _table_batches(rows, *, limit, directory):
+    """Discover the ordered union of columns for each CSV or Excel sheet."""
+    first = True
+    while True:
+        with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, dir=directory) as spool:
+            columns = {}
+            count = 0
+            for row in islice(rows, limit):
+                columns.update(dict.fromkeys(row))
+                spool.write(_json_bytes(row) + b"\n")
+                count += 1
+            if count or first:
+                spool.seek(0)
+                yield list(columns) or ["study_id"], (json.loads(line) for line in spool)
+            if limit is None or count < limit:
+                return
+            first = False
 
 
 def _flatten(value: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -328,15 +365,6 @@ def _flatten(value: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
         else:
             result[name] = item
     return result
-
-
-def _columns(rows: list[dict[str, Any]]) -> list[str]:
-    columns: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in columns:
-                columns.append(key)
-    return columns or ["study_id"]
 
 
 def _csv_value(value: Any) -> Any:
@@ -381,34 +409,41 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_workbook(path: Path, sheets: list[tuple[str, list[dict[str, Any]]]]) -> None:
-    if not sheets:
-        sheets = [("metadata", [])]
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as book:
-            overrides = "".join(
-                f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-                for i in range(1, len(sheets) + 1)
-            )
-            book.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + overrides + '</Types>')
-            book.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-            sheet_refs = "".join(f'<sheet name="{escape(title)}" sheetId="{i}" r:id="rId{i}"/>' for i, (title, _) in enumerate(sheets, 1))
-            book.writestr("xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheet_refs + '</sheets></workbook>')
-            rels = "".join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1, len(sheets) + 1))
-            rels += f'<Relationship Id="rId{len(sheets)+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
-            book.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>')
-            book.writestr("xl/styles.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="11"/><name val="Arial"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf fontId="0" fillId="0" borderId="0"/><xf fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>')
-            for index, (_, rows) in enumerate(sheets, 1):
-                columns = _columns(rows)
-                xml_rows = [_xlsx_row(1, columns, header=True)]
-                xml_rows.extend(_xlsx_row(number, [row.get(column) for column in columns]) for number, row in enumerate(rows, 2))
-                book.writestr(f"xl/worksheets/sheet{index}.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + "".join(xml_rows) + '</sheetData><autoFilter ref="A1:' + _column_name(len(columns)) + str(max(1, len(rows)+1)) + '"/></worksheet>')
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+def _write_workbook(path: Path, payload, selected) -> None:
+    # The export directory is published atomically after validation.
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as book:
+        titles = []
+        for name in EXPORT_CATEGORIES:
+            if name not in selected:
+                continue
+            first_sheet = len(titles)
+            for columns, batch in _table_batches(_table_rows(payload, name),
+                                                  limit=EXCEL_MAX_ROWS - 1, directory=path.parent):
+                titles.append(name)
+                with book.open(f"xl/worksheets/sheet{len(titles)}.xml", "w", force_zip64=True) as sheet:
+                    sheet.write(b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>')
+                    sheet.write(_xlsx_row(1, columns, header=True).encode("utf-8"))
+                    last = 1
+                    for last, row in enumerate(batch, 2):
+                        values = [row.get(column) for column in columns]
+                        sheet.write(_xlsx_row(last, values).encode("utf-8"))
+                    cell = _column_name(len(columns)) + str(last)
+                    sheet.write(f'</sheetData><autoFilter ref="A1:{cell}"/></worksheet>'.encode())
+            if len(titles) - first_sheet > 1:
+                for index in range(first_sheet, len(titles)):
+                    titles[index] = f"{name[:28]}_{index - first_sheet + 1}"[:31]
+        overrides = "".join(
+            f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            for i in range(1, len(titles) + 1)
+        )
+        book.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + overrides + '</Types>')
+        book.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        sheet_refs = "".join(f'<sheet name="{escape(title)}" sheetId="{i}" r:id="rId{i}"/>' for i, title in enumerate(titles, 1))
+        book.writestr("xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheet_refs + '</sheets></workbook>')
+        rels = "".join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1, len(titles) + 1))
+        rels += f'<Relationship Id="rId{len(titles)+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        book.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>')
+        book.writestr("xl/styles.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="11"/><name val="Arial"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf fontId="0" fillId="0" borderId="0"/><xf fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>')
 
 
 def _xlsx_row(number: int, values: Sequence[Any], *, header: bool = False) -> str:

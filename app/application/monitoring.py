@@ -539,14 +539,14 @@ class MonitoringService:
 
     def get_waveforms(self, window_sec: float = DISPLAY_WINDOW_SEC) -> dict[str, object]:
         with self._lock:
-            waves = self._aeration.waveforms(window_sec)
-            # Keep the public result independent from processor-owned arrays.
-            return {
-                "time": waves["time"].copy(),
-                "global": waves["global"].copy(),
-                "velocity": waves["velocity"].copy(),
-                "rois": [values.copy() for values in waves["rois"]],
-            }
+            return self._aeration.waveforms(window_sec)
+
+    @property
+    def latest_delta_map(self) -> ReconstructionMap | None:
+        """Read just the immutable map needed to latch a hidden widget's scale."""
+        with self._lock:
+            frame = self._latest_reconstructed_frame
+            return frame.reconstructed_delta_z if frame is not None else None
 
     def configure_aeration_analysis(
         self, *, window_seconds: float, cycle_count: int | None = None
@@ -572,16 +572,18 @@ class MonitoringService:
             )
 
     def read_view(self, window_sec: float = DISPLAY_WINDOW_SEC) -> MonitoringView:
-        """Return synchronized curves and metrics while acquisition is locked."""
-        with self._lock:
-            return MonitoringView(
-                snapshot=self.snapshot,
-                waveforms=self.get_waveforms(window_sec),
-            )
+        """Capture one data version, then calculate trends outside the acquisition lock."""
+        return self._read_view(window_sec)
 
     @property
     def snapshot(self) -> MonitoringSnapshot:
+        return self._read_view(DISPLAY_WINDOW_SEC).snapshot
+
+    def _read_view(self, window_sec: float) -> MonitoringView:
         with self._lock:
+            waves = self._aeration.waveforms(max(window_sec, DISPLAY_WINDOW_SEC))
+            sample_rate = self._aeration.parameters.sample_rate_hz
+            selection_window, _ = self._aeration.analysis_selection
             result = self._aeration.result()
             peep_result = self._peep.result()
             stream_state = self._stream_state_locked()
@@ -636,11 +638,28 @@ class MonitoringService:
                     quality_reason=reason,
                     metric_statuses=statuses,
                 )
-        waves = self.get_waveforms()
-        global_values = waves["global"]
-        roi_values = waves["rois"]
-        if not isinstance(global_values, np.ndarray) or global_values.size == 0:
-            selection_window, _ = self._aeration.analysis_selection
+        trend_count = max(1, int(DISPLAY_WINDOW_SEC * sample_rate))
+        global_values = waves["global"][-trend_count:]
+        roi_values = [values[-trend_count:] for values in waves["rois"]]
+        snapshot = self._build_snapshot(result, peep_result, stream_state, selection_window,
+                                        reconstruction_map, absolute_conductivity_map,
+                                        global_values, roi_values)
+        if window_sec < DISPLAY_WINDOW_SEC:
+            count = max(1, int(window_sec * sample_rate))
+            waves = {
+                "time": waves["time"][-count:],
+                "global": waves["global"][-count:],
+                "velocity": waves["velocity"][-count:],
+                "rois": [values[-count:] for values in roi_values],
+            }
+        return MonitoringView(snapshot, waves)
+
+    @staticmethod
+    def _build_snapshot(result, peep_result, stream_state, selection_window,
+                        reconstruction_map, absolute_conductivity_map,
+                        global_values, roi_values) -> MonitoringSnapshot:
+        roi_count = len(roi_values)
+        if global_values.size == 0:
             return MonitoringSnapshot(
                 quality=result.quality,
                 quality_reason=result.quality_reason,
@@ -658,12 +677,11 @@ class MonitoringService:
                 algorithm_parameters=result.parameters,
                 peep=peep_result,
                 roi_pct=result.roi_percent,
-                roi_trends=(None,) * self._roi_count,
+                roi_trends=(None,) * roi_count,
             )
 
         roi_pct = result.roi_percent
 
-        selection_window, _ = self._aeration.analysis_selection
         trends_available = result.quality in {DataQuality.VALID, DataQuality.DEGRADED}
         return MonitoringSnapshot(
             rr=result.respiratory_rate_bpm,
@@ -682,11 +700,11 @@ class MonitoringService:
             absolute_conductivity_map=absolute_conductivity_map,
             trend_global=_trend(global_values) if trends_available else None,
             trend_r=(
-                _trend(_mean_channels(roi_values[:self._roi_count // 2]))
+                _trend(_mean_channels(roi_values[:roi_count // 2]))
                 if trends_available else None
             ),
             trend_l=(
-                _trend(_mean_channels(roi_values[self._roi_count // 2:]))
+                _trend(_mean_channels(roi_values[roi_count // 2:]))
                 if trends_available else None
             ),
             roi_trends=tuple(
